@@ -18,6 +18,13 @@
     <IsPublishable>True</IsPublishable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <Compile Remove="Capsules\**" />
+    <EmbeddedResource Remove="Capsules\**" />
+    <None Remove="Capsules\**" />
+    <Page Remove="Capsules\**" />
+  </ItemGroup>
+
    <ItemGroup>
     <PackageReference Include="DalamudPackager" Version="15.0.0" />
     <PackageReference Include="Fody" Version="6.9.3" PrivateAssets="all" />
@@ -41,10 +48,6 @@
     <Reference Include="InteropGenerator.Runtime" HintPath="$(AppData)\XIVLauncher\addon\Hooks\dev\InteropGenerator.Runtime.dll" Private="false" />
     <Reference Include="Lumina" HintPath="$(AppData)\XIVLauncher\addon\Hooks\dev\Lumina.dll" Private="false" />
     <Reference Include="Lumina.Excel" HintPath="$(AppData)\XIVLauncher\addon\Hooks\dev\Lumina.Excel.dll" Private="false" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Folder Include="Capsules\" />
   </ItemGroup>
 
     <Target Name="PackagePlugin" AfterTargets="CleanOutDir" Condition="'$(Configuration)' == 'Release'">

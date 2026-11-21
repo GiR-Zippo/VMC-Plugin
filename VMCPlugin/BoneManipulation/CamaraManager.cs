@@ -50,7 +50,7 @@ public class CamController : IDisposable
     }
 
     private readonly OneEuro pitchFilter = new();
-
+    private float baseH, baseV, relYaw0, pitch0;
     private readonly object vmcLock = new();
     private System.Numerics.Quaternion vmcRot;
     private System.Numerics.Vector3 vmcPos;
@@ -73,7 +73,7 @@ public class CamController : IDisposable
     // Minimum allowed camera zoom in the normal game
     public const float MinCameraDistance = 1.5f;
 
-    public const int MinFoV = 78; // Lower than 78 breaks scrolling for camera transitions
+    public const int MinFoV = 20;// 78; // Lower than 78 breaks scrolling for camera transitions
     public const int MaxFoV = 112;
 
     // Maximum distance change per delay tick
@@ -87,9 +87,6 @@ public class CamController : IDisposable
     private const float DefaultDirVMax = 45 * (MathF.PI / 180f);
     private const float DefaultFoV = 0.78f;
     private const float DirVEpsilon = 0.0020f; // Small value to avoid an issue with the game flipping camera when looking straight up/down, 1,570796327f ~= 90 degrees
-    private const float EulerEpsilon = 0.001f; // Adjust to avoid camera jittering when idle
-    private const int NoseBoneIndex = 33; // j_f_uhana
-    private const int FaceBoneIndex = 2; // j_f_face
     private const int HeadBoneIndex = 0; // j_kao
     public const float DegreesToRadians = MathF.PI / 180.0f;
     public const float RadiansToDegrees = 180.0f / MathF.PI;
@@ -99,7 +96,6 @@ public class CamController : IDisposable
 
     private const int HeadSkeletonIndex = 1;
 
-    public Vector3 DesiredRolls = new Vector3(0, 0,0);
 
     // 0.1f and 0.12f are empirical adjustments to better match eye position, based on female miqo'te
     private FFXIVClientStructs.FFXIV.Common.Math.Vector3 FirstPersonOffset => new(configuration.FirstPersonHeadOffsetSideward, configuration.FirstPersonHeadOffsetUpward + 0.1f, configuration.FirstPersonHeadOffsetForward + 0.12f);
@@ -475,11 +471,9 @@ public class CamController : IDisposable
             Scale = baseScale
         });
 
-        //var boneModelPos = Vector3.Transform(new Vector3(boneTransform->Translation.X, boneTransform->Translation.Y, boneTransform->Translation.Z), playerModelMatrix);
         var boneModelPos = Vector3.Transform(headPos, playerModelMatrix);
 
         // Calculate rotation of the bone in world space so we can determine where the player's head is facing
-        //var boneWorldRotation = charaBase->DrawObject.Object.Rotation * new Quaternion(boneTransform->Rotation.X, boneTransform->Rotation.Y, boneTransform->Rotation.Z, boneTransform->Rotation.W);
         var boneWorldRotation = charaBase->DrawObject.Object.Rotation * headRot;
 
         // Apply Coordinate Correction
@@ -492,62 +486,39 @@ public class CamController : IDisposable
         var offset = Vector3.Transform(FirstPersonOffset, correctedBoneRot);
         boneModelPos += offset;
 
-        // Begin adjusting camera rotation
-
-        //var dirV = headRot.Y*10 + dirVDiff;
-        var dirV = pitchFilter.Step(headRot.Y * 15, 1f, 1.0f) + dirVDiff;
-        var dirH = realDirH + dirHDiff;
-
-
-
-
         // Determine DirV and DirH limits
         CalculateDirectionRange(bonePitch, configuration.FirstPersonHeadPitchLimit,
                                 configuration.FirstPersonHeadRotationPitch * DegreesToRadians, out var dirvMin,
                                 out var dirvMax);
 
+        var relYaw = RotationalDifference(boneYaw, chara->Rotation);   // Kopf relativ zum Körper
+        var pitchF = pitchFilter.Step(bonePitch, 1f, 1f);
+        float dirH, dirV;
+
         if (previousTickWasFirstPerson)
         {
-            // Apply rotation delta to camera
-
-            // Yaw affects camera DirH
-            var diff = RotationalDifference(boneYaw, previousFacing);
-            if (Math.Abs(diff) > EulerEpsilon)
+            baseH = RotateDir(baseH + dirHDiff);   // nur Maus
+            baseV += dirVDiff;
+            dirH = baseH;
+            dirV = baseV+ pitchFilter.Step(headRot.Y, 20f, 5f); // add Y axis
+            if (!reducedMotion)
             {
-                if (!reducedMotion && !InputManager.IsRightMouseDown())
-                    dirH += diff;
-                previousFacing = boneYaw;
+                dirH += RotationalDifference(relYaw, relYaw0);
+                dirV += RotationalDifference(pitchF, pitch0);
             }
-
-            if (reducedMotion)
-            {
-                diff = RotationalDifference(chara->Rotation, previousCharacterFacing);
-                if (!InputManager.IsRightMouseDown())
-                    dirH += diff;
-            }
-
-            // Pitch affects camera DirV
-            diff = RotationalDifference(bonePitch, previousHeadPitch);
-            if (Math.Abs(diff) > EulerEpsilon)
-            {
-                if (!reducedMotion)
-                    dirV += diff;
-                previousHeadPitch = bonePitch;
-            }
+            previousFacing = boneYaw;        // für den Ausstiegs-Code oben
+            previousHeadPitch = bonePitch;
         }
         else
         {
             DerestrictDirV();
-
-            // Make sure we face the same way our character does when entering first person
-            previousDirH = dirH = boneYaw;
-            realDirH = boneYaw;
-            previousFacing = boneYaw;
-            dirV = bonePitch;
-            realDirV = bonePitch;
-            previousHeadPitch = bonePitch;
+            pitchFilter.Reset();
+            pitchF = pitchFilter.Step(bonePitch, 1f, 1f);
+            relYaw0 = relYaw;
+            pitch0 = pitchF;
+            baseH = dirH = realDirH = previousDirH = previousFacing = boneYaw;
+            baseV = dirV = realDirV = previousHeadPitch = bonePitch;
             previousTickWasFirstPerson = true;
-            Api.PluginLog.Debug($"Entered first person, initializing camera vertical limits and orientation.");
         }
 
         // Keep DirV in reasonable range to avoid camera flipping issues
@@ -575,10 +546,7 @@ public class CamController : IDisposable
         var isFlippedByGame = Math.Abs(dirV) > StraightUp;
 
         // Handle DirH clamping
-        CalculateDirectionRange(boneYaw, configuration.FirstPersonHeadYawLimit, 0f, out var dirhMin, out var dirhMax);
         dirH = RotateDir(dirH);
-        if (!reducedMotion)
-            dirH = ClampRotational(dirH, dirhMin, dirhMax);
 
         // Save updated real DirH/DirV for next tick
         realDirH = dirH;

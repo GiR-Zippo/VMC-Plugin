@@ -130,18 +130,6 @@ public sealed unsafe class VmcHeadReceiver : IDisposable
         }
     }
 
-    public bool IsReceiving
-    {
-        get
-        {
-            lock (sync)
-            {
-                if (!enabled || !hasPacket) return false;
-                return GetNowSeconds() - lastPacketUtcSec <= PacketTimeoutSeconds;
-            }
-        }
-    }
-
     public VmcHeadReceiver(IObjectTable objects, IPluginLog log, Configuration conf, CamController cam)
     {
         this.objects = objects;
@@ -304,12 +292,14 @@ public sealed unsafe class VmcHeadReceiver : IDisposable
         lock (sync)
         {
             hasPacket = true;
-            lastPacketUtcSec = now;
-            var moved = !latestBoneRots.TryGetValue(canonicalKey, out var prev)
-                        || MathF.Abs(prev.X - rot.X) + MathF.Abs(prev.Y - rot.Y)
-                         + MathF.Abs(prev.Z - rot.Z) + MathF.Abs(prev.W - rot.W) > 1e-5f;
+            lastPacketUtcSec = now;   // Stream bleibt "frisch", auch wenn das Paket verworfen wird
+
+            if (latestBoneRots.TryGetValue(canonicalKey, out var prev)
+                && MathF.Abs(Quaternion.Dot(prev, rot)) > MathF.Cos(config.JitterDeg * MathF.PI / 360f))
+                return;   // Mikroruckler verwerfen
+
             latestBoneRots[canonicalKey] = rot;
-            if (moved) latestBoneTimes[canonicalKey] = now;   // Zeit läuft nur bei echter Bewegung
+            latestBoneTimes[canonicalKey] = now;
         }
     }
 

@@ -32,18 +32,9 @@ public class Configuration : IPluginConfiguration
     public bool Vrm1 { get; set; }   // Modell in XR Animator ist VRM 1.0
     public float RetargetBlend { get; set; } = 1f;
     public float RetargetFadeSec { get; set; } = 0.4f;
+    public float JitterDeg { get; set; } = 0.2f;
 
     public bool FirstPersonLook { get; set; }
-    public bool CamInvertPitch { get; set; }
-    public bool CamBindPosition { get; set; } = true;
-    public float CamEyeUp { get; set; } = 0.57f;    // Meter, Augenhöhe über j_kao
-    public float CamEyeFwd { get; set; } = 0.4f;   // Meter, nach vorn
-    public float CamUp { get; set; } = 0f;          // Meter nach oben, relativ zum Körper
-    public float CamBack { get; set; } = -0.9f;     // Meter nach vorn/hinten, negativ = hinter dem Char
-    public float CamYawOffsetDeg { get; set; } = 0f;
-    public float CamFixXDeg { get; set; }
-    public float CamFixYDeg { get; set; }
-    public float CamFixZDeg { get; set; }
 
     public float FirstPersonCameraCullingDistance { get; set; } = 4f;
     public bool AllowInGpose { get; set; } = false;
@@ -59,7 +50,6 @@ public class Configuration : IPluginConfiguration
     public int FirstPersonFieldOfView { get; set; } = 78;
     public bool RemoveRollInFirstPerson { get; set; } = false;
     public bool ThirdPersonControl { get; set; } = false;
-
     public bool UseFurtherCameraForLargerMounts { get; set; } = true;
 
     [NonSerialized]

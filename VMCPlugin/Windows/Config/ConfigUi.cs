@@ -203,27 +203,43 @@ internal class ConfigUi : IDisposable
         if (ImGui.SliderFloat("Mocap-Anteil", ref bl, 0f, 1f)) { config.RetargetBlend = bl; changed = true; }
         var fd = config.RetargetFadeSec;
         if (ImGui.SliderFloat("Fade (s)", ref fd, 0.05f, 2f)) { config.RetargetFadeSec = fd; changed = true; }
+        var jd = config.JitterDeg;
+        if (ImGui.SliderFloat("Jitter-Schwelle (°)", ref jd, 0f, 2f, "%.2f")) { config.JitterDeg = jd; changed = true; }
         return changed;
     }
 
     private bool DrawFPV()
     {
-        bool changed = false;
-        changed |= Toggle("Kamera folgt Kopf", _config.FirstPersonLook, v => _config.FirstPersonLook = v);
-        changed |= Toggle("Position an Kopf binden", _config.CamBindPosition, v => _config.CamBindPosition = v);
-        ImGui.SameLine();
-        changed |= Toggle("Pitch invertieren", _config.CamInvertPitch, v => _config.CamInvertPitch = v);
+        bool ch = false;
+        ch |= Toggle("Kamera folgt Kopf", _config.FirstPersonLook, v => _config.FirstPersonLook = v);
+        ImGui.TextDisabled("Bewegung");
+        ch |= Toggle("Reduzierte Bewegung", _config.ReducedMotion, v => _config.ReducedMotion = v);
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("An: Kopf bewegt die Kamera nicht (nur Position).");
+        ch |= Toggle("Reduziert im Kampf/Duty", _config.ReducedMotionInCombat, v => _config.ReducedMotionInCombat = v);
+        ch |= Toggle("Volle Bewegung bei Emotes", _config.FullMotionInEmotes, v => _config.FullMotionInEmotes = v);
+        ch |= Toggle("Roll entfernen", _config.RemoveRollInFirstPerson, v => _config.RemoveRollInFirstPerson = v);
 
-        changed |= Drag("Auge hoch (m)", _config.CamEyeUp, 0.005f, -0.5f, 0.5f, v => _config.CamEyeUp = v, "%.3f");
-        changed |= Drag("Auge vor (m)", _config.CamEyeFwd, 0.005f, -0.5f, 0.5f, v => _config.CamEyeFwd = v, "%.3f");
-        changed |= Drag("Kamera hoch (m)", _config.CamUp, 0.01f, -3f, 3f, v => _config.CamUp = v);
-        changed |= Drag("Kamera vor/zurück (m)", _config.CamBack, 0.01f, -3f, 3f, v => _config.CamBack = v);
-        changed |= Drag("Yaw-Offset (°)", _config.CamYawOffsetDeg, 0.5f, -180f, 180f, v => _config.CamYawOffsetDeg = v, "%.1f");
+        ImGui.Spacing();
+        ImGui.TextDisabled("Kopf-Offset (m)");
+        ch |= SliderF("Vor", _config.FirstPersonHeadOffsetForward, -0.5f, 0.5f, v => _config.FirstPersonHeadOffsetForward = v, "%.3f");
+        ch |= SliderF("Hoch", _config.FirstPersonHeadOffsetUpward, -0.5f, 0.5f, v => _config.FirstPersonHeadOffsetUpward = v, "%.3f");
+        ch |= SliderF("Seitlich", _config.FirstPersonHeadOffsetSideward, -0.5f, 0.5f, v => _config.FirstPersonHeadOffsetSideward = v, "%.3f");
 
-        changed |= Drag("Kopf-Achse X (°)", _config.CamFixXDeg, 0.5f, -180f, 180f, v => _config.CamFixXDeg = v, "%.1f");
-        changed |= Drag("Kopf-Achse Y (°)", _config.CamFixYDeg, 0.5f, -180f, 180f, v => _config.CamFixYDeg = v, "%.1f");
-        changed |= Drag("Kopf-Achse Z (°)", _config.CamFixZDeg, 0.5f, -180f, 180f, v => _config.CamFixZDeg = v, "%.1f");
-        return changed;
+        ImGui.Spacing();
+        ImGui.TextDisabled("Limits");
+        ch |= SliderI("Pitch-Rotation", _config.FirstPersonHeadRotationPitch, -90, 90, v => _config.FirstPersonHeadRotationPitch = v);
+        ch |= SliderI("Pitch-Limit", _config.FirstPersonHeadPitchLimit, 0, 180, v => _config.FirstPersonHeadPitchLimit = v);
+        ch |= SliderI("Yaw-Limit", _config.FirstPersonHeadYawLimit, 0, 180, v => _config.FirstPersonHeadYawLimit = v);
+        ch |= SliderI("Field of View", _config.FirstPersonFieldOfView, CamController.MinFoV, CamController.MaxFoV, v => _config.FirstPersonFieldOfView = v, "%d");
+        ch |= SliderF("Culling-Distanz (m)", _config.FirstPersonCameraCullingDistance, 0f, 10f, v => _config.FirstPersonCameraCullingDistance = v, "%.1f");
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("Sonstiges");
+        ch |= Toggle("In GPose erlauben", _config.AllowInGpose, v => _config.AllowInGpose = v);
+        ch |= Toggle("Third-Person-Distanz steuern", _config.ThirdPersonControl, v => _config.ThirdPersonControl = v);
+        ch |= Toggle("Weiter weg bei großen Mounts", _config.UseFurtherCameraForLargerMounts, v => _config.UseFurtherCameraForLargerMounts = v);
+
+        return ch;
     }
 
     private bool DrawDebug()
@@ -245,6 +261,20 @@ internal class ConfigUi : IDisposable
         if (!ImGui.Checkbox(label, ref value)) return false;
         set(value);
         return true;
+    }
+
+    private static bool SliderF(string label, float v, float min, float max, Action<float> set, string fmt = "%.2f")
+    {
+        ImGui.SetNextItemWidth(220f);
+        if (!ImGui.SliderFloat(label, ref v, min, max, fmt)) return false;
+        set(v); return true;
+    }
+
+    private static bool SliderI(string label, int v, int min, int max, Action<int> set, string fmt = "%d°")
+    {
+        ImGui.SetNextItemWidth(220f);
+        if (!ImGui.SliderInt(label, ref v, min, max, fmt)) return false;
+        set(v); return true;
     }
 
     private static bool Drag(string label, float v, float speed, float min, float max, Action<float> set, string fmt = "%.2f")
