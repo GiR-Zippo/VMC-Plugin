@@ -1,0 +1,65 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Platforms>x64</Platforms>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <UseWpf>true</UseWpf>
+    <Description>TestPlugin.</Description>
+    <PackageProjectUrl>https://github.com/GiR-Zippo/VMC-Plugin</PackageProjectUrl>
+    <Version>0.0.3.2</Version>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <DalamudLibPath>$(appdata)\XIVLauncher\addon\Hooks\dev\</DalamudLibPath>
+    <IsPublishable>True</IsPublishable>
+  </PropertyGroup>
+
+   <ItemGroup>
+    <PackageReference Include="DalamudPackager" Version="15.0.0" />
+    <PackageReference Include="Fody" Version="6.9.3" PrivateAssets="all" />
+    <PackageReference Include="H.Formatters" Version="15.0.0" />
+    <PackageReference Include="H.Formatters.Newtonsoft.Json" Version="15.0.0" />
+    <PackageReference Include="H.Pipes" Version="15.0.0" />
+    <PackageReference Include="H.Pipes.AccessControl" Version="15.0.0" />
+    <PackageReference Include="JetBrains.Annotations" Version="2026.2.0" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <PackageReference Include="Resourcer.Fody" Version="1.8.1" PrivateAssets="all" />
+    <PackageReference Include="TinyIpc" Version="5.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Dalamud" HintPath="$(AppData)\XIVLauncher\addon\Hooks\dev\Dalamud.dll" Private="false" />
+    <Reference Include="Dalamud.Bindings.ImGui" HintPath="$(AppData)\XIVLauncher\addon\Hooks\dev\Dalamud.Bindings.ImGui.dll" Private="false" />
+    <Reference Include="Dalamud.Bindings.ImGuizmo" HintPath="$(AppData)\XIVLauncher\addon\Hooks\dev\Dalamud.Bindings.ImGuizmo.dll" Private="false" />
+    <Reference Include="Dalamud.Bindings.ImPlot" HintPath="$(AppData)\XIVLauncher\addon\Hooks\dev\Dalamud.Bindings.ImPlot.dll" Private="false" />
+    <Reference Include="FFXIVClientStructs" HintPath="$(AppData)\XIVLauncher\addon\Hooks\dev\FFXIVClientStructs.dll" Private="false" />
+    <Reference Include="ImGuiScene" HintPath="$(AppData)\XIVLauncher\addon\Hooks\dev\ImGuiScene.dll" Private="false" />
+    <Reference Include="InteropGenerator.Runtime" HintPath="$(AppData)\XIVLauncher\addon\Hooks\dev\InteropGenerator.Runtime.dll" Private="false" />
+    <Reference Include="Lumina" HintPath="$(AppData)\XIVLauncher\addon\Hooks\dev\Lumina.dll" Private="false" />
+    <Reference Include="Lumina.Excel" HintPath="$(AppData)\XIVLauncher\addon\Hooks\dev\Lumina.Excel.dll" Private="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Capsules\" />
+  </ItemGroup>
+
+    <Target Name="PackagePlugin" AfterTargets="CleanOutDir" Condition="'$(Configuration)' == 'Release'">
+        <DalamudPackager ProjectDir="$(ProjectDir)" OutputPath="$(OutputPath)" Exclude="*.pdb;" AssemblyName="$(AssemblyName)" MakeZip="true" />
+    </Target>
+
+  <Target Name="CleanOutDir" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+    <ItemGroup>
+      <DeleteAssemblies Include="$(TargetDir)*.pdb" />
+      <DeleteAssemblies Include="$(TargetDir)$(AssemblyName).deps.json" />
+    </ItemGroup>
+    <Message Text="Deleting @(DeleteAssemblies)" Importance="high" />
+    <Delete Files="@(DeleteAssemblies)" />
+    <RemoveDir Directories="$(TargetDir)\ref\" />
+  </Target>
+
+
+</Project>

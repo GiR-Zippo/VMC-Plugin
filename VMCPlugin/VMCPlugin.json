@@ -1,0 +1,13 @@
+{
+    "Author": "GiR-Zippo",
+    "Name": "VMCPlugin",
+    "Punchline": "A VMC Receiver plugin.",
+    "Description": "A plugin receiving VMC data and use it on your character.",
+    "InternalName": "VMCPlugin",
+    "ApplicableVersion": "any",
+    "Tags": [
+        "VMC",
+        "VR",
+        "Posing"
+    ]
+}
