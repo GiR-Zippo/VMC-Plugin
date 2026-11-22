@@ -19,10 +19,10 @@ internal class ConfigUi : IDisposable
 
     private static readonly (string Name, Func<string, bool> Has)[] _Groups =
     {
-        ("Körper", b => b is "Hips" or "Spine" or "Chest" or "UpperChest" or "Neck" or "Head"),
-        ("Arme",   b => b.EndsWith("Shoulder") || b.EndsWith("Arm") || b.EndsWith("Hand")),
+        ("Body", b => b is "Hips" or "Spine" or "Chest" or "UpperChest" or "Neck" or "Head"),
+        ("Arms",   b => b.EndsWith("Shoulder") || b.EndsWith("Arm") || b.EndsWith("Hand")),
         ("Finger", b => b.Contains("Proximal") || b.Contains("Intermediate")),
-        ("Beine",  b => b.Contains("Leg") || b.EndsWith("Foot") || b.EndsWith("Toes")),
+        ("Legs",  b => b.Contains("Leg") || b.EndsWith("Foot") || b.EndsWith("Toes")),
     };
 
     private static bool BoneChk(BonePreset p, string b)
@@ -138,8 +138,6 @@ internal class ConfigUi : IDisposable
         _vmcRecv.Enabled = config.Enabled;
 
         Toggle("First Person View", config.FirstPersonLook, v=> config.FirstPersonLook =v);
-
-
     }
 
     private bool DrawPresets()
@@ -158,15 +156,15 @@ internal class ConfigUi : IDisposable
             ImGui.EndCombo();
         }
         ImGui.SameLine();
-        if (ImGui.Button("+ Neu")) { ps.Add(new BonePreset { Name = $"Preset {ps.Count + 1}", Bones = new(p.Bones, StringComparer.OrdinalIgnoreCase) }); _config.ActivePreset = ps.Count - 1; ch = true; }
+        if (ImGui.Button("+ New")) { ps.Add(new BonePreset { Name = $"Preset {ps.Count + 1}", Bones = new(p.Bones, StringComparer.OrdinalIgnoreCase) }); _config.ActivePreset = ps.Count - 1; ch = true; }
         ImGui.SameLine();
-        if (ps.Count > 1 && ImGui.Button("Löschen")) { ps.RemoveAt(_config.ActivePreset); _config.ActivePreset = 0; return true; }
+        if (ps.Count > 1 && ImGui.Button("Delete")) { ps.RemoveAt(_config.ActivePreset); _config.ActivePreset = 0; return true; }
 
         var name = p.Name;
         ImGui.SetNextItemWidth(200f);
         if (ImGui.InputText("Name", ref name, 64)) { p.Name = name; ch = true; }
 
-        if (ImGui.Button("Alle")) { p.Bones = new(VmcHeadReceiver.AllBones, StringComparer.OrdinalIgnoreCase); ch = true; }
+        if (ImGui.Button("All")) { p.Bones = new(VmcHeadReceiver.AllBones, StringComparer.OrdinalIgnoreCase); ch = true; }
         ImGui.Separator();
         foreach (var (gName, has) in _Groups)
         {
@@ -175,9 +173,9 @@ internal class ConfigUi : IDisposable
             ImGui.PushID(gName);
             if (ImGui.CollapsingHeader($"{gName}  ({cnt}/{bones.Length})###h"))
             {
-                if (ImGui.SmallButton("Alle")) { foreach (var b in bones) p.Bones.Add(b); ch = true; }
+                if (ImGui.SmallButton("All")) { foreach (var b in bones) p.Bones.Add(b); ch = true; }
                 ImGui.SameLine();
-                if (ImGui.SmallButton("Keine")) { foreach (var b in bones) p.Bones.Remove(b); ch = true; }
+                if (ImGui.SmallButton("None")) { foreach (var b in bones) p.Bones.Remove(b); ch = true; }
 
                 var l = bones.Where(b => b.StartsWith("Left")).ToArray();
                 var r = bones.Where(b => b.StartsWith("Right")).ToArray();
@@ -185,8 +183,8 @@ internal class ConfigUi : IDisposable
                     foreach (var b in bones) ch |= BoneChk(p, b);
                 else if (ImGui.BeginTable("##t", 2))
                 {
-                    ImGui.TableSetupColumn("Links");
-                    ImGui.TableSetupColumn("Rechts");
+                    ImGui.TableSetupColumn("Left");
+                    ImGui.TableSetupColumn("Right");
                     ImGui.TableHeadersRow();
                     for (var i = 0; i < l.Length; i++)
                     {
@@ -206,17 +204,17 @@ internal class ConfigUi : IDisposable
         bool ch = false;
         var hp = config.HairPrefix;
         ImGui.SetNextItemWidth(220f);
-        if (ImGui.InputText("Haar-Bone-Präfixe", ref hp, 128))
+        if (ImGui.InputText("Haar-Bone-Prefixes", ref hp, 128))
         {
             config.HairPrefix = hp;
             ch = true;
         }
-        ch |= Toggle("Haar-Federn", config.HairSpring, v => config.HairSpring = v);
-        ch |= SliderF("Steifigkeit", config.HairStiff, 10f, 200f, v => config.HairStiff = v, "%.0f");
-        ch |= SliderF("Dämpfung", config.HairDamp, 1f, 30f, v => config.HairDamp = v, "%.1f");
-        ch |= SliderF("Stärke", config.HairStrength, 0f, 1f, v => config.HairStrength = v);
-        ch |= Toggle("Haar-Feder nur im Stand", config.HairOnlyIdle, v => config.HairOnlyIdle = v);
-        ch |= SliderF("Idle-Schwelle (m/s)", config.HairIdleSpeed, 0.02f, 1f, v => config.HairIdleSpeed = v, "%.2f");
+        ch |= Toggle("Hair-Springy", config.HairSpring, v => config.HairSpring = v);
+        ch |= SliderF("Stiffnes", config.HairStiff, 10f, 200f, v => config.HairStiff = v, "%.0f");
+        ch |= SliderF("Dampen", config.HairDamp, 1f, 30f, v => config.HairDamp = v, "%.1f");
+        ch |= SliderF("Strongnes", config.HairStrength, 0f, 1f, v => config.HairStrength = v);
+        ch |= Toggle("Haar-Springs only when idle", config.HairOnlyIdle, v => config.HairOnlyIdle = v);
+        ch |= SliderF("Idle-Threshold (m/s)", config.HairIdleSpeed, 0.02f, 1f, v => config.HairIdleSpeed = v, "%.2f");
         return ch;
     }
 
@@ -231,11 +229,11 @@ internal class ConfigUi : IDisposable
         changed |= Toggle("VRM1", config.Vrm1, v => config.Vrm1 = v);
 
         var bl = config.RetargetBlend;
-        if (ImGui.SliderFloat("Mocap-Anteil", ref bl, 0f, 1f)) { config.RetargetBlend = bl; changed = true; }
+        if (ImGui.SliderFloat("Mocap-Portion", ref bl, 0f, 1f)) { config.RetargetBlend = bl; changed = true; }
         var fd = config.RetargetFadeSec;
         if (ImGui.SliderFloat("Fade (s)", ref fd, 0.05f, 2f)) { config.RetargetFadeSec = fd; changed = true; }
         var jd = config.JitterDeg;
-        if (ImGui.SliderFloat("Jitter-Schwelle (°)", ref jd, 0f, 2f, "%.2f")) { config.JitterDeg = jd; changed = true; }
+        if (ImGui.SliderFloat("Jitter-Threshold (°)", ref jd, 0f, 2f, "%.2f")) { config.JitterDeg = jd; changed = true; }
         return changed;
     }
 
@@ -247,12 +245,12 @@ internal class ConfigUi : IDisposable
 
         if (ImGui.BeginTable("##emotes", 7, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
         {
-            ImGui.TableSetupColumn("An", ImGuiTableColumnFlags.WidthFixed, 28f);
+            ImGui.TableSetupColumn("On", ImGuiTableColumnFlags.WidthFixed, 28f);
             ImGui.TableSetupColumn("Blendshape", ImGuiTableColumnFlags.WidthStretch, 1.5f);
             ImGui.TableSetupColumn("Live", ImGuiTableColumnFlags.WidthFixed, 45f);
-            ImGui.TableSetupColumn("Schwelle", ImGuiTableColumnFlags.WidthStretch, 1f);
-            ImGui.TableSetupColumn("Halten/CD (s)", ImGuiTableColumnFlags.WidthStretch, 1.4f);
-            ImGui.TableSetupColumn("Befehl", ImGuiTableColumnFlags.WidthStretch, 1.5f);
+            ImGui.TableSetupColumn("Threshold", ImGuiTableColumnFlags.WidthStretch, 1f);
+            ImGui.TableSetupColumn("Hold/CD (s)", ImGuiTableColumnFlags.WidthStretch, 1.4f);
+            ImGui.TableSetupColumn("Command", ImGuiTableColumnFlags.WidthStretch, 1.5f);
             ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 30f);
             ImGui.TableHeadersRow();
 
@@ -309,16 +307,21 @@ internal class ConfigUi : IDisposable
     private bool DrawFace()
     {
         var ch = Toggle("Face-Tracking", _config.FaceTracking, v => _config.FaceTracking = v);
+        
+        if (ImGui.Button("Log Face-Bones")) _vmcRecv.DumpFaceBones();
         ImGui.SameLine();
-        if (ImGui.Button("Face-Bones loggen")) _vmcRecv.DumpFaceBones();
-        ImGui.SameLine();
-        if (ImGui.Button("Standard laden (ersetzt)")) { _config.FaceRules.Clear(); _config.FaceRules.AddRange(FaceRule.Defaults()); ch = true; }
+        if (ImGui.Button("Load default (replaces)")) 
+        {
+            _config.FaceRules.Clear();
+            _config.FaceRules.AddRange(FaceRule.Defaults());
+            ch = true;
+        }
 
         var rules = _config.FaceRules;
         var rm = -1;
         if (ImGui.BeginTable("##face", 8, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
         {
-            ImGui.TableSetupColumn("An", ImGuiTableColumnFlags.WidthFixed, 28f);
+            ImGui.TableSetupColumn("On", ImGuiTableColumnFlags.WidthFixed, 28f);
             ImGui.TableSetupColumn("Blendshape", ImGuiTableColumnFlags.WidthStretch, 1.2f);
             ImGui.TableSetupColumn("Live", ImGuiTableColumnFlags.WidthFixed, 40f);
             ImGui.TableSetupColumn("Bone", ImGuiTableColumnFlags.WidthStretch, 1.2f);
@@ -386,33 +389,34 @@ internal class ConfigUi : IDisposable
     private bool DrawFPV()
     {
         bool ch = false;
-        ch |= Toggle("Kamera folgt Kopf", _config.FirstPersonLook, v => _config.FirstPersonLook = v);
-        ImGui.TextDisabled("Bewegung");
-        ch |= Toggle("Reduzierte Bewegung", _config.ReducedMotion, v => _config.ReducedMotion = v);
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip("An: Kopf bewegt die Kamera nicht (nur Position).");
-        ch |= Toggle("Reduziert im Kampf/Duty", _config.ReducedMotionInCombat, v => _config.ReducedMotionInCombat = v);
-        ch |= Toggle("Volle Bewegung bei Emotes", _config.FullMotionInEmotes, v => _config.FullMotionInEmotes = v);
-        ch |= Toggle("Roll entfernen", _config.RemoveRollInFirstPerson, v => _config.RemoveRollInFirstPerson = v);
+        ch |= Toggle("Enabled", _config.FirstPersonLook, v => _config.FirstPersonLook = v);
+
+        ImGui.TextDisabled("Motion");
+        ch |= Toggle("Reduce motion", _config.ReducedMotion, v => _config.ReducedMotion = v);
+
+        ch |= Toggle("Reduce motion in combat and instanced content", _config.ReducedMotionInCombat, v => _config.ReducedMotionInCombat = v);
+        ch |= Toggle("Allow full motion in emotes", _config.FullMotionInEmotes, v => _config.FullMotionInEmotes = v);
+        ch |= Toggle("Remove camera roll in first person", _config.RemoveRollInFirstPerson, v => _config.RemoveRollInFirstPerson = v);
 
         ImGui.Spacing();
-        ImGui.TextDisabled("Kopf-Offset (m)");
-        ch |= SliderF("Vor", _config.FirstPersonHeadOffsetForward, -0.5f, 0.5f, v => _config.FirstPersonHeadOffsetForward = v, "%.3f");
-        ch |= SliderF("Hoch", _config.FirstPersonHeadOffsetUpward, -0.5f, 0.5f, v => _config.FirstPersonHeadOffsetUpward = v, "%.3f");
-        ch |= SliderF("Seitlich", _config.FirstPersonHeadOffsetSideward, -0.5f, 0.5f, v => _config.FirstPersonHeadOffsetSideward = v, "%.3f");
+        ImGui.TextDisabled("First Person Adjustments");
+        ch |= SliderF("Camera offset forward", _config.FirstPersonHeadOffsetForward, -0.5f, 0.5f, v => _config.FirstPersonHeadOffsetForward = v, "%.3f");
+        ch |= SliderF("Camera offset up", _config.FirstPersonHeadOffsetUpward, -0.5f, 0.5f, v => _config.FirstPersonHeadOffsetUpward = v, "%.3f");
+        ch |= SliderF("Camera offset sideways", _config.FirstPersonHeadOffsetSideward, -0.5f, 0.5f, v => _config.FirstPersonHeadOffsetSideward = v, "%.3f");
 
         ImGui.Spacing();
         ImGui.TextDisabled("Limits");
-        ch |= SliderI("Pitch-Rotation", _config.FirstPersonHeadRotationPitch, -90, 90, v => _config.FirstPersonHeadRotationPitch = v);
-        ch |= SliderI("Pitch-Limit", _config.FirstPersonHeadPitchLimit, 0, 180, v => _config.FirstPersonHeadPitchLimit = v);
-        ch |= SliderI("Yaw-Limit", _config.FirstPersonHeadYawLimit, 0, 180, v => _config.FirstPersonHeadYawLimit = v);
-        ch |= SliderI("Field of View", _config.FirstPersonFieldOfView, CamController.MinFoV, CamController.MaxFoV, v => _config.FirstPersonFieldOfView = v, "%d");
-        ch |= SliderF("Culling-Distanz (m)", _config.FirstPersonCameraCullingDistance, 0f, 10f, v => _config.FirstPersonCameraCullingDistance = v, "%.1f");
+        ch |= SliderI("Head rotation pitch adjustment", _config.FirstPersonHeadRotationPitch, -90, 90, v => _config.FirstPersonHeadRotationPitch = v);
+        ch |= SliderI("Maximum vertical angle", _config.FirstPersonHeadPitchLimit, 0, 180, v => _config.FirstPersonHeadPitchLimit = v);
+        ch |= SliderI("Maximum horizontal angle", _config.FirstPersonHeadYawLimit, 0, 180, v => _config.FirstPersonHeadYawLimit = v);
+        ch |= SliderI("Field of view in first person", _config.FirstPersonFieldOfView, CamController.MinFoV, CamController.MaxFoV, v => _config.FirstPersonFieldOfView = v, "%d");
+        ch |= SliderF("Camera culling distance (m)", _config.FirstPersonCameraCullingDistance, 0f, 10f, v => _config.FirstPersonCameraCullingDistance = v, "%.1f");
 
         ImGui.Spacing();
         ImGui.TextDisabled("Sonstiges");
-        ch |= Toggle("In GPose erlauben", _config.AllowInGpose, v => _config.AllowInGpose = v);
-        ch |= Toggle("Third-Person-Distanz steuern", _config.ThirdPersonControl, v => _config.ThirdPersonControl = v);
-        ch |= Toggle("Weiter weg bei großen Mounts", _config.UseFurtherCameraForLargerMounts, v => _config.UseFurtherCameraForLargerMounts = v);
+        ch |= Toggle("Allow first person tracking in Gpose", _config.AllowInGpose, v => _config.AllowInGpose = v);
+        ch |= Toggle("Enable third person camera control", _config.ThirdPersonControl, v => _config.ThirdPersonControl = v);
+        ch |= Toggle("Use further camera for larger mounts", _config.UseFurtherCameraForLargerMounts, v => _config.UseFurtherCameraForLargerMounts = v);
 
         return ch;
     }
