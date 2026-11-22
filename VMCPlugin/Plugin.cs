@@ -107,8 +107,6 @@ public sealed unsafe class Plugin : IDalamudPlugin
         pi.UiBuilder.Draw -= OnDraw;
         pi.UiBuilder.OpenConfigUi -= OpenConfig;
         framework.Update -= OnUpdate;
-
-        commands.RemoveHandler(CommandName);
         configUi.Dispose();
         pi.SavePluginConfig(config);
     }
