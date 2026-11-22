@@ -1,0 +1,20 @@
+{
+  "Author": "GiR-Zippo",
+  "Name": "VMCPlugin",
+  "InternalName": "VMCPlugin",
+  "AssemblyVersion": "0.0.3.2",
+  "Description": "A plugin receiving VMC data and use it on your character.",
+  "ApplicableVersion": "any",
+  "Tags": [
+    "VMC",
+    "VR",
+    "Posing"
+  ],
+  "DalamudApiLevel": 15,
+  "LoadRequiredState": 0,
+  "LoadSync": false,
+  "CanUnloadAsync": false,
+  "LoadPriority": 0,
+  "Punchline": "A VMC Receiver plugin.",
+  "AcceptsFeedback": true
+}

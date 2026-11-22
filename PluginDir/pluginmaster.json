@@ -1,0 +1,24 @@
+[
+    {
+        "Author": "Kalle",
+        "Name": "VMCPlugin",
+        "InternalName": "VMCPlugin",
+        "AssemblyVersion": "0.0.3.2",
+        "Description": "A plugin receiving VMC data and use it on your character.",
+        "ApplicableVersion": "any",
+        "RepoUrl": "https://github.com/GiR-Zippo/VMC-Plugin",
+        "CategoryTags": [
+            "utility",
+            "other"
+        ],
+        "LoadPriority": 0,
+        "IconUrl": "https://raw.githubusercontent.com/GiR-Zippo/Hypnotoad-Plugin/master/Data/icon.png",
+        "Punchline": "A useles test plogon.",
+        "IsHide": "False",
+        "IsTestingExclusive": "False",
+        "LastUpdate": "1794785344",
+        "DownloadLinkInstall": "https://github.com//GiR-Zippo/MareClient/releases/download/1.116.0.1/latest.zip",
+        "DownloadLinkTesting": "https://github.com//GiR-Zippo/MareClient/releases/download/1.116.0.1/latest.zip",
+        "DownloadLinkUpdate": "https://github.com//GiR-Zippo/MareClient/releases/download/1.116.0.1/latest.zip"
+    }
+]
