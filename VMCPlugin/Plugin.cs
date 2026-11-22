@@ -1,11 +1,11 @@
-﻿using VMCPlugin.BoneManipulation;
-using VMCPlugin.Windows;
-using VMCPlugin.Windows.Config;
-using VMCPlugin.Config;
-using VMCPlugin.Offsets;
-using Dalamud.Game.Command;
+﻿using Dalamud.Game.Command;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
+using VMCPlugin.BoneManipulation;
+using VMCPlugin.Config;
+using VMCPlugin.Offsets;
+using VMCPlugin.Windows;
+using VMCPlugin.Windows.Config;
 
 namespace VMCPlugin;
 
@@ -78,14 +78,15 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
     private void OnUpdate(IFramework _)
     {
+        vmcHead.UpdateEmotes();
+        while (vmcHead.Commands.TryDequeue(out var cmd)) SendChat(cmd);
+    }
 
-        /*var localPlayer = objects.LocalPlayer;
-
-        if (localPlayer == null || !ShouldRun())
-        {
-            hasLast = false; 
-            return;
-        }*/
+    private static unsafe void SendChat(string cmd)
+    {
+        var s = FFXIVClientStructs.FFXIV.Client.System.String.Utf8String.FromString(cmd);
+        FFXIVClientStructs.FFXIV.Client.UI.UIModule.Instance()->ProcessChatBoxEntry(s);
+        s->Dtor(true);
     }
 
     private void OpenConfig() => showConfig = true;

@@ -3,10 +3,8 @@ using Dalamud.Plugin;
 using System;
 using System.Linq;
 using System.Numerics;
-using System.Threading.Channels;
 using VMCPlugin.BoneManipulation;
 using VMCPlugin.Config;
-using static FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentTradeMultiple.Delegates;
 
 namespace VMCPlugin.Windows.Config;
 
@@ -41,6 +39,8 @@ internal class ConfigUi : IDisposable
         "General",
         "VRM",
         "Presets",
+        "Emotes",
+        "Face Tracking",
         "FPView",
         "Debug"
     };
@@ -102,9 +102,15 @@ internal class ConfigUi : IDisposable
                     DrawPresets();
                     break;
                 case 3:
+                    DrawEmotes();
+                    break;
+                case 4:
+                    DrawFace();
+                    break;
+                case 5:
                     DrawFPV();
                     break;
-                case 4: // Debug
+                case 6: // Debug
                     changed = DrawDebug();
                     break;
             }
@@ -208,6 +214,150 @@ internal class ConfigUi : IDisposable
         return changed;
     }
 
+    private bool DrawEmotes()
+    {
+        var ch = false;
+        var rules = _config.EmoteRules;
+        var rm = -1;
+
+        if (ImGui.BeginTable("##emotes", 7, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
+        {
+            ImGui.TableSetupColumn("An", ImGuiTableColumnFlags.WidthFixed, 28f);
+            ImGui.TableSetupColumn("Blendshape", ImGuiTableColumnFlags.WidthStretch, 1.5f);
+            ImGui.TableSetupColumn("Live", ImGuiTableColumnFlags.WidthFixed, 45f);
+            ImGui.TableSetupColumn("Schwelle", ImGuiTableColumnFlags.WidthStretch, 1f);
+            ImGui.TableSetupColumn("Halten/CD (s)", ImGuiTableColumnFlags.WidthStretch, 1.4f);
+            ImGui.TableSetupColumn("Befehl", ImGuiTableColumnFlags.WidthStretch, 1.5f);
+            ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 30f);
+            ImGui.TableHeadersRow();
+
+            for (var i = 0; i < rules.Count; i++)
+            {
+                var r = rules[i];
+                ImGui.PushID(5000 + i);
+                ImGui.TableNextRow();
+
+                ImGui.TableNextColumn();
+                var on = r.Enabled;
+                if (ImGui.Checkbox("##on", ref on)) { r.Enabled = on; ch = true; }
+
+                ImGui.TableNextColumn();
+                ImGui.SetNextItemWidth(-1f);
+                var bn = r.Blend;
+                if (ImGui.InputText("##bn", ref bn, 64)) { r.Blend = bn; ch = true; }
+
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(_vmcRecv.GetBlend(r.Blend).ToString("0.00"));
+
+                ImGui.TableNextColumn();
+                ImGui.SetNextItemWidth(-1f);
+                var th = r.Threshold;
+                if (ImGui.SliderFloat("##th", ref th, 0.05f, 1f, "%.2f")) { r.Threshold = th; ch = true; }
+
+                ImGui.TableNextColumn();
+                ImGui.SetNextItemWidth(60f);
+                var hs = r.HoldSec;
+                if (ImGui.DragFloat("##hs", ref hs, 0.05f, 0f, 5f, "%.2f")) { r.HoldSec = hs; ch = true; }
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(60f);
+                var cd = r.CooldownSec;
+                if (ImGui.DragFloat("##cd", ref cd, 0.1f, 0f, 60f, "%.1f")) { r.CooldownSec = cd; ch = true; }
+
+                ImGui.TableNextColumn();
+                ImGui.SetNextItemWidth(-1f);
+                var cmd = r.Command;
+                if (ImGui.InputText("##cmd", ref cmd, 64)) { r.Command = cmd; ch = true; }
+
+                ImGui.TableNextColumn();
+                if (ImGui.SmallButton("x")) rm = i;
+
+                ImGui.PopID();
+            }
+            ImGui.EndTable();
+        }
+
+        if (rm >= 0) { rules.RemoveAt(rm); ch = true; }
+        if (ImGui.Button("+ Emote")) { rules.Add(new EmoteRule()); ch = true; }
+        return ch;
+    }
+
+    private bool DrawFace()
+    {
+        var ch = Toggle("Face-Tracking", _config.FaceTracking, v => _config.FaceTracking = v);
+        ImGui.SameLine();
+        if (ImGui.Button("Face-Bones loggen")) _vmcRecv.DumpFaceBones();
+        ImGui.SameLine();
+        if (ImGui.Button("Standard laden (ersetzt)")) { _config.FaceRules.Clear(); _config.FaceRules.AddRange(FaceRule.Defaults()); ch = true; }
+
+        var rules = _config.FaceRules;
+        var rm = -1;
+        if (ImGui.BeginTable("##face", 8, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
+        {
+            ImGui.TableSetupColumn("An", ImGuiTableColumnFlags.WidthFixed, 28f);
+            ImGui.TableSetupColumn("Blendshape", ImGuiTableColumnFlags.WidthStretch, 1.2f);
+            ImGui.TableSetupColumn("Live", ImGuiTableColumnFlags.WidthFixed, 40f);
+            ImGui.TableSetupColumn("Bone", ImGuiTableColumnFlags.WidthStretch, 1.2f);
+            ImGui.TableSetupColumn("Pos (m)", ImGuiTableColumnFlags.WidthStretch, 2.4f);
+            ImGui.TableSetupColumn("Rot (°)", ImGuiTableColumnFlags.WidthStretch, 2.4f);
+            ImGui.TableSetupColumn("T", ImGuiTableColumnFlags.WidthFixed, 26f);
+            ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 30f);
+            ImGui.TableHeadersRow();
+
+            for (var i = 0; i < rules.Count; i++)
+            {
+                var r = rules[i];
+                ImGui.PushID(6000 + i);
+                ImGui.TableNextRow();
+
+                ImGui.TableNextColumn();
+                var on = r.Enabled;
+                if (ImGui.Checkbox("##on", ref on)) { r.Enabled = on; ch = true; }
+
+                ImGui.TableNextColumn();
+                ImGui.SetNextItemWidth(-1f);
+                var bn = r.Blend;
+                if (ImGui.InputText("##bn", ref bn, 64)) { r.Blend = bn; ch = true; }
+
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(_vmcRecv.GetBlend(r.Blend).ToString("0.00"));
+
+                ImGui.TableNextColumn();
+                ImGui.SetNextItemWidth(-1f);
+                var bo = r.Bone;
+                if (ImGui.InputText("##bo", ref bo, 64)) { r.Bone = bo; ch = true; }
+
+                ImGui.TableNextColumn();
+                var px = r.PosX; var py = r.PosY; var pz = r.PosZ;
+                ImGui.SetNextItemWidth(55f); if (ImGui.DragFloat("##px", ref px, 0.0005f, -0.2f, 0.2f, "%.4f")) { r.PosX = px; ch = true; }
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(55f); if (ImGui.DragFloat("##py", ref py, 0.0005f, -0.2f, 0.2f, "%.4f")) { r.PosY = py; ch = true; }
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(55f); if (ImGui.DragFloat("##pz", ref pz, 0.0005f, -0.2f, 0.2f, "%.4f")) { r.PosZ = pz; ch = true; }
+
+                ImGui.TableNextColumn();
+                var rx = r.RotX; var ry = r.RotY; var rz = r.RotZ;
+                ImGui.SetNextItemWidth(55f); if (ImGui.DragFloat("##rx", ref rx, 0.2f, -90f, 90f, "%.1f")) { r.RotX = rx; ch = true; }
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(55f); if (ImGui.DragFloat("##ry", ref ry, 0.2f, -90f, 90f, "%.1f")) { r.RotY = ry; ch = true; }
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(55f); if (ImGui.DragFloat("##rz", ref rz, 0.2f, -90f, 90f, "%.1f")) { r.RotZ = rz; ch = true; }
+
+                ImGui.TableNextColumn();
+                ImGui.Button("T");
+                r.Force = ImGui.IsItemActive();   // gedrückt halten = Wert 1.0
+
+                ImGui.TableNextColumn();
+                if (ImGui.SmallButton("x")) rm = i;
+
+                ImGui.PopID();
+            }
+            ImGui.EndTable();
+        }
+        if (rm >= 0) { rules.RemoveAt(rm); ch = true; }
+        if (ImGui.Button("+ Regel")) { rules.Add(new FaceRule()); ch = true; }
+        return ch;
+    }
+
     private bool DrawFPV()
     {
         bool ch = false;
@@ -245,14 +395,7 @@ internal class ConfigUi : IDisposable
     private bool DrawDebug()
     {
         bool changed = false;
-
-        ImGui.Spacing();
-        var dist = _config.DebugMaxDistance;
-        if (ImGui.SliderFloat("Max. Entfernung (m)", ref dist, 2f, 30f))
-        {
-            _config.DebugMaxDistance = dist;
-            changed = true;
-        }
+        changed |= Toggle("Emote-Log", _config.DebugEmotes, v => _config.DebugEmotes = v);
         return changed;
     }
 

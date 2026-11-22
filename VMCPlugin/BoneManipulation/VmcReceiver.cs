@@ -3,6 +3,7 @@ using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using FFXIVClientStructs.Havok.Animation.Rig;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -18,6 +19,13 @@ namespace VMCPlugin.BoneManipulation;
 public sealed unsafe class VmcHeadReceiver : IDisposable
 {
     private CamController cam;
+
+    //--- Face Stuff
+    private readonly Dictionary<string, List<(int p, int b)>> faceIdx = new(StringComparer.OrdinalIgnoreCase);
+    private nint faceSkel;
+    private int faceSig;
+    //---
+
 
     private readonly record struct RNode(string Vmc, string Xiv, string? Parent, bool Lift, float Sx);
 
@@ -66,11 +74,35 @@ public sealed unsafe class VmcHeadReceiver : IDisposable
         return d;
     }
 
-    // Unity (links-händig) → XIV (rechts-händig): Achse spiegeln
+    private readonly Dictionary<string, float> blends = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<EmoteRule, (double since, double fired)> emoteState = new();
+    public readonly ConcurrentQueue<string> Commands = new();
+    private readonly Dictionary<string, float> loggedBlends = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Gets the latest received blend shape value for the specified name.
+    /// </summary>
+    /// <param name="n">The blend shape name.</param>
+    /// <returns>The current blend value, or <c>0f</c> if not found.</returns>
+    public float GetBlend(string n) { lock (sync) return blends.TryGetValue(n, out var v) ? v : 0f; }
+
+    private readonly Dictionary<FaceRule, float> faceSm = new();
+    private double lastFaceT;
+
+    /// <summary>
+    /// Converts a Unity quaternion into Final Fantasy XIV's coordinate space based on the configured VRM version.
+    /// </summary>
+    /// <param name="q">The source rotation quaternion in Unity coordinates.</param>
+    /// <returns>The transformed rotation quaternion in FFXIV coordinates.</returns>
     private Quaternion ToXiv(Quaternion q) => config.Vrm1
         ? new Quaternion(q.X, -q.Y, -q.Z, q.W)    // VRM 1.0: schaut +Z, links = -X → X spiegeln
         : new Quaternion(-q.X, -q.Y, q.Z, q.W);   // VRM 0.x: schaut -Z → Z spiegeln
 
+    /// <summary>
+    /// Removes the yaw (Y-axis twist) component from a quaternion while preserving its remaining orientation.
+    /// </summary>
+    /// <param name="q">The input quaternion.</param>
+    /// <returns>The normalized quaternion with yaw removed, or the original quaternion if the twist is near zero.</returns>
     private static Quaternion RemoveYaw(Quaternion q)
     {
         var twist = new Quaternion(0, q.Y, 0, q.W);
@@ -130,6 +162,13 @@ public sealed unsafe class VmcHeadReceiver : IDisposable
         }
     }
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="VmcHeadReceiver"/> class.
+    /// </summary>
+    /// <param name="objects">The Dalamud object table service used to access the local player.</param>
+    /// <param name="log">The Dalamud plugin log service.</param>
+    /// <param name="conf">The active plugin configuration.</param>
+    /// <param name="cam">The camera controller used for first-person head tracking updates.</param>
     public VmcHeadReceiver(IObjectTable objects, IPluginLog log, Configuration conf, CamController cam)
     {
         this.objects = objects;
@@ -138,6 +177,11 @@ public sealed unsafe class VmcHeadReceiver : IDisposable
         this.cam = cam;
     }
 
+    #region Network
+    /// <summary>
+    /// Starts or restarts the background UDP listener on the specified port to receive VMC OSC packets.
+    /// </summary>
+    /// <param name="listenPort">The UDP port number to listen on.</param>
     public void StartListener(int listenPort)
     {
         StopListener();
@@ -165,6 +209,9 @@ public sealed unsafe class VmcHeadReceiver : IDisposable
         }
     }
 
+    /// <summary>
+    /// Stops the background receive thread and closes/disposes the UDP socket and cancellation token source.
+    /// </summary>
     public void StopListener()
     {
         try { cts?.Cancel(); } catch { }
@@ -175,6 +222,10 @@ public sealed unsafe class VmcHeadReceiver : IDisposable
         recvThread = null;
     }
 
+    /// <summary>
+    /// Continuously polls the UDP socket for incoming OSC data and dispatches it for parsing until cancelled or disposed.
+    /// </summary>
+    /// <param name="token">Cancellation token used to stop the receive loop cleanly.</param>
     private void ReceiveLoop(CancellationToken token)
     {
         var remote = new IPEndPoint(IPAddress.Any, 0);
@@ -203,7 +254,10 @@ public sealed unsafe class VmcHeadReceiver : IDisposable
         }
     }
 
-    // Unterstützt einzelne OSC-Messages sowie OSC-Bundles (#bundle)
+    /// <summary>
+    /// Parses a raw OSC packet, handling both standalone OSC messages and OSC bundles (<c>#bundle</c>).
+    /// </summary>
+    /// <param name="data">The raw byte span of the incoming OSC packet.</param>
     private void ParseOscPacket(ReadOnlySpan<byte> data)
     {
         if (data.Length < 4) return;
@@ -228,56 +282,91 @@ public sealed unsafe class VmcHeadReceiver : IDisposable
         ParseOscMessage(data);
     }
 
+    /// <summary>
+    /// Parses a single OSC message and updates blend values or bone rotations for supported VMC addresses.
+    /// </summary>
+    /// <param name="msg">The raw byte span of a single OSC message.</param>
     private void ParseOscMessage(ReadOnlySpan<byte> msg)
     {
         if (!TryReadOscString(msg, 0, out var address, out var idx)) return;
-        if (!address.Equals("/VMC/Ext/Bone/Pos", StringComparison.OrdinalIgnoreCase)) return;
+
         if (!TryReadOscString(msg, idx, out var tags, out idx)) return;
         if (!tags.StartsWith(",", StringComparison.Ordinal)) return;
 
-        string? boneName = null;
-        float qx = 0, qy = 0, qz = 0, qw = 1f;
-        var floatIndex = 0;
-
-        for (var t = 1; t < tags.Length; t++)
+        if (address.Equals("/VMC/Ext/Blend/Val", StringComparison.OrdinalIgnoreCase))
         {
-            var tag = tags[t];
-            if (tag == 's')
+            if (tags.StartsWith(",sf")
+                && TryReadOscString(msg, idx, out var bn, out idx) && idx + 4 <= msg.Length)
             {
-                if (!TryReadOscString(msg, idx, out var sVal, out idx)) return;
-                if (boneName == null) boneName = sVal;
-            }
-            else if (tag == 'f')
-            {
-                if (idx + 4 > msg.Length) return;
-                var fVal = ReadSingleBE(msg[idx..]);
-                idx += 4;
+                var name = bn.Trim();
+                var val = ReadSingleBE(msg[idx..]);
+                lock (sync) blends[name] = val;
 
-                // Float 0..2 = px, py, pz | Float 3..6 = qx, qy, qz, qw
-                switch (floatIndex++)
+                if (config.DebugEmotes && (!loggedBlends.TryGetValue(name, out var lv) || MathF.Abs(val - lv) >= 0.1f))
                 {
-                    case 3: qx = fVal; break;
-                    case 4: qy = fVal; break;
-                    case 5: qz = fVal; break;
-                    case 6: qw = fVal; break;
+                    loggedBlends[name] = val;
+                    log.Debug($"VMC Blend: {name} = {val:0.00}");
                 }
             }
-            else if (tag == 'i' || tag == 'd')
-            {
-                var step = tag == 'd' ? 8 : 4;
-                if (idx + step > msg.Length) return;
-                idx += step;
-            }
-            else
-            {
-                return;
-            }
+            return;
         }
 
-        if (string.IsNullOrWhiteSpace(boneName)) return;
-        StoreBoneRotation(boneName.Trim(), qx, qy, qz, qw);
-    }
+        if (address.Equals("/VMC/Ext/Bone/Pos", StringComparison.OrdinalIgnoreCase))
+        {
+            string? boneName = null;
+            float qx = 0, qy = 0, qz = 0, qw = 1f;
+            var floatIndex = 0;
 
+            for (var t = 1; t < tags.Length; t++)
+            {
+                var tag = tags[t];
+                if (tag == 's')
+                {
+                    if (!TryReadOscString(msg, idx, out var sVal, out idx)) return;
+                    if (boneName == null) boneName = sVal;
+                }
+                else if (tag == 'f')
+                {
+                    if (idx + 4 > msg.Length) return;
+                    var fVal = ReadSingleBE(msg[idx..]);
+                    idx += 4;
+
+                    // Float 0..2 = px, py, pz | Float 3..6 = qx, qy, qz, qw
+                    switch (floatIndex++)
+                    {
+                        case 3: qx = fVal; break;
+                        case 4: qy = fVal; break;
+                        case 5: qz = fVal; break;
+                        case 6: qw = fVal; break;
+                    }
+                }
+                else if (tag == 'i' || tag == 'd')
+                {
+                    var step = tag == 'd' ? 8 : 4;
+                    if (idx + step > msg.Length) return;
+                    idx += step;
+                }
+                else
+                {
+                    return;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(boneName)) return;
+            StoreBoneRotation(boneName.Trim(), qx, qy, qz, qw);
+        }
+    }
+    #endregion
+
+    #region NetworkFunction
+    /// <summary>
+    /// Validates, normalizes, jitter-filters, and stores a received bone rotation along with its timestamp.
+    /// </summary>
+    /// <param name="boneName">The incoming VMC bone name.</param>
+    /// <param name="qx">The X component of the rotation quaternion.</param>
+    /// <param name="qy">The Y component of the rotation quaternion.</param>
+    /// <param name="qz">The Z component of the rotation quaternion.</param>
+    /// <param name="qw">The W component of the rotation quaternion.</param>
     private void StoreBoneRotation(string boneName, float qx, float qy, float qz, float qw)
     {
         if (!TryGetConfiguredSourceKey(boneName, out var canonicalKey))
@@ -303,11 +392,55 @@ public sealed unsafe class VmcHeadReceiver : IDisposable
         }
     }
 
+    /// <summary>
+    /// Resolves an incoming bone name to its canonical retargeting key.
+    /// </summary>
+    /// <param name="incomingBoneName">The bone name received from VMC.</param>
+    /// <param name="canonicalKey">When found, outputs the canonical retarget key.</param>
+    /// <returns><c>true</c> if the bone name is mapped for retargeting; otherwise, <c>false</c>.</returns>
     private bool TryGetConfiguredSourceKey(string incomingBoneName, out string canonicalKey)
     {
         return RetargetKeys.TryGetValue(incomingBoneName, out canonicalKey);
     }
+    #endregion
 
+    #region Bonemanipulation
+    /// <summary>
+    /// Applies active VMC bone retargeting and optional facial tracking to the local player during render updates.
+    /// </summary>
+    public void Apply()
+    {
+        if (!enabled) return;
+
+        bool isFresh;
+        Dictionary<string, Quaternion> boneSnapshot;
+        Dictionary<string, double> timeSnapshot;
+        lock (sync)
+        {
+            isFresh = hasPacket && (GetNowSeconds() - lastPacketUtcSec <= PacketTimeoutSeconds);
+            boneSnapshot = new Dictionary<string, Quaternion>(latestBoneRots, StringComparer.OrdinalIgnoreCase);
+            timeSnapshot = new Dictionary<string, double>(latestBoneTimes, StringComparer.OrdinalIgnoreCase);
+        }
+        if (!isFresh) return;
+
+        var lp = objects.LocalPlayer;
+        if (lp == null) return;
+
+        ApplyFullRetarget(lp.Address, boneSnapshot, timeSnapshot);
+
+        if (config.FaceTracking)
+            ApplyFace(lp.Address, isFresh);
+
+        if (!isFresh) return;   // Chain-Regeln (Jaw/Augen) nur mit frischem Stream
+    }
+
+    /// <summary>
+    /// Applies full-body VMC bone retargeting (including A-to-T lift compensation, blending, and optional first-person head camera updates) to the character's skeleton.
+    /// </summary>
+    /// <param name="charAddress">Native pointer address of the target <see cref="Character"/>.</param>
+    /// <param name="snap">Snapshot of the latest received bone rotations keyed by VMC bone name.</param>
+    /// <param name="times">Snapshot of the timestamps when each bone last received an update.</param>
+    /// <returns><c>true</c> if any bone has an active retarget weight above the threshold; otherwise, <c>false</c>.</returns>
     private bool ApplyFullRetarget(nint charAddress, Dictionary<string, Quaternion> snap, Dictionary<string, double> times)
     {
         var chara = (Character*)charAddress;
@@ -375,6 +508,7 @@ public sealed unsafe class VmcHeadReceiver : IDisposable
             RotateByName(skel, n.Xiv, new Vector3(t.X, t.Y, t.Z), delta);
         }
 
+        //Process when FPV is enabled
         if (config.FirstPersonLook)
         {
             if (skel->PartialSkeletonCount > 1)
@@ -393,6 +527,11 @@ public sealed unsafe class VmcHeadReceiver : IDisposable
         return anyActive;
     }
 
+    /// <summary>
+    /// Computes model-space reference pose rotations for every bone in a Havok skeleton.
+    /// </summary>
+    /// <param name="hk">Pointer to the Havok skeleton.</param>
+    /// <returns>An array of model-space reference rotations indexed by bone index.</returns>
     private static Quaternion[] BuildRefModelRots(hkaSkeleton* hk)
     {
         var r = new Quaternion[hk->Bones.Length];
@@ -406,17 +545,15 @@ public sealed unsafe class VmcHeadReceiver : IDisposable
         return r;
     }
 
-    private static Quaternion FromTo(Vector3 d, Vector3 t)
-    {
-        var axis = Vector3.Cross(d, t);
-        var len = axis.Length();
-        if (len < 1e-5f) return Quaternion.Identity;
-        return Quaternion.CreateFromAxisAngle(axis / len, MathF.Atan2(len, Vector3.Dot(d, t)));
-    }
-
-    // Subtree über ALLE Partials (Haare, Gesicht, Gear), wie beim Kopf-Fix
-    private static void RotateByName(FFXIVClientStructs.FFXIV.Client.Graphics.Render.Skeleton* skel,
-        string boneName, Vector3 pivot, Quaternion q)
+    /// <summary>
+    /// Rotates a named bone and its descendants across all partial skeletons in the character's render skeleton.
+    /// </summary>
+    /// <param name="skel">Pointer to the FFXIV render skeleton.</param>
+    /// <param name="boneName">The name of the root bone to rotate.</param>
+    /// <param name="pivot">The pivot point around which translations are rotated.</param>
+    /// <param name="q">The rotation quaternion to apply.</param>
+    /// <param name="t">Optional translation offset added to affected bones.</param>
+    private static void RotateByName(FFXIVClientStructs.FFXIV.Client.Graphics.Render.Skeleton* skel, string boneName, Vector3 pivot, Quaternion q, Vector3 t = default)
     {
         var subtree = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (var p = 0; p < skel->PartialSkeletonCount; p++)
@@ -442,8 +579,7 @@ public sealed unsafe class VmcHeadReceiver : IDisposable
             {
                 if (!InSubtree(hk, i, subtree)) continue;
                 var tr = &pose->ModelPose.Data[i];
-                var nt = pivot + Vector3.Transform(
-                    new Vector3(tr->Translation.X, tr->Translation.Y, tr->Translation.Z) - pivot, q);
+                var nt = pivot + Vector3.Transform(new Vector3(tr->Translation.X, tr->Translation.Y, tr->Translation.Z) - pivot, q) +t;
                 tr->Translation.X = nt.X; tr->Translation.Y = nt.Y; tr->Translation.Z = nt.Z;
                 var nr = Quaternion.Normalize(
                     q * new Quaternion(tr->Rotation.X, tr->Rotation.Y, tr->Rotation.Z, tr->Rotation.W));
@@ -451,111 +587,160 @@ public sealed unsafe class VmcHeadReceiver : IDisposable
             }
         }
     }
+    #endregion
 
-    // Im Render-Hook aufrufen (z. B. vor oder nach DeformCharacter)
-    public void Apply()
+    #region Emote
+    /// <summary>
+    /// Evaluates configured emote rules against current blend values and enqueues chat commands when hold and cooldown conditions are met.
+    /// </summary>
+    public void UpdateEmotes()
     {
-        if (!enabled) return;
-
-        bool isFresh;
-        Dictionary<string, Quaternion> boneSnapshot;
-        Dictionary<string, double> timeSnapshot;
-        lock (sync)
+        var now = GetNowSeconds();
+        foreach (var r in config.EmoteRules)
         {
-            isFresh = hasPacket && (GetNowSeconds() - lastPacketUtcSec <= PacketTimeoutSeconds);
-            boneSnapshot = new Dictionary<string, Quaternion>(latestBoneRots, StringComparer.OrdinalIgnoreCase);
-            timeSnapshot = new Dictionary<string, double>(latestBoneTimes, StringComparer.OrdinalIgnoreCase);
+            if (!r.Enabled || !r.Command.StartsWith('/')) continue;
+            emoteState.TryGetValue(r, out var st);
+            if (GetBlend(r.Blend) < r.Threshold) { emoteState[r] = (0, st.fired); continue; }
+
+            var since = st.since == 0 ? now : st.since;
+            var fired = st.fired;
+            if (now - since >= r.HoldSec && now - fired >= r.CooldownSec)
+            {
+                Commands.Enqueue(r.Command);
+                if (config.DebugEmotes) log.Debug($"VMC Emote ausgelöst: {r.Blend} ({GetBlend(r.Blend):0.00}) -> {r.Command}");
+                fired = now;
+                since = double.MaxValue;   // erst nach Abfall unter Schwelle wieder scharf
+            }
+            emoteState[r] = (since, fired);
         }
-        if (!isFresh) return;
-
-        var lp = objects.LocalPlayer;
-        if (lp == null) return;
-
-        ApplyFullRetarget(lp.Address, boneSnapshot, timeSnapshot);
-        if (!isFresh) return;   // Chain-Regeln (Jaw/Augen) nur mit frischem Stream
     }
+    #endregion
 
-    private static Quaternion AdjustAxes(Quaternion q, bool invPitch, bool invYaw, bool invRoll)
+    #region Face
+    /// <summary>
+    /// Rebuilds the cached facial bone index when needed and applies smoothed facial blend rules to the character's skeleton.
+    /// </summary>
+    /// <param name="addr">Native pointer address of the target <see cref="Character"/>.</param>
+    /// <param name="fresh">Indicates whether the incoming VMC stream is currently fresh.</param>
+    private void ApplyFace(nint addr, bool fresh)
     {
-        // Einfache Achsen-Spiegelung (X = Pitch, Y = Yaw, Z = Roll)
-        var x = invPitch ? -q.X : q.X;
-        var y = invYaw ? -q.Y : q.Y;
-        var z = invRoll ? -q.Z : q.Z;
-        return Quaternion.Normalize(new Quaternion(x, y, z, q.W));
-    }
-
-    private static void ApplyRotationToChain(nint charAddress, string[] chainBones, Quaternion deltaRot, float scale)
-    {
-        if (charAddress == 0 || chainBones.Length == 0) return;
-
-        var chara = (Character*)charAddress;
-        var draw = chara->GameObject.DrawObject;
-        if (draw == null || draw->Object.GetObjectType() != ObjectType.CharacterBase)
-            return;
-
-        var cb = (CharacterBase*)draw;
-        var skel = cb->Skeleton;
+        var draw = ((Character*)addr)->GameObject.DrawObject;
+        if (draw == null || draw->Object.GetObjectType() != ObjectType.CharacterBase) return;
+        var skel = ((CharacterBase*)draw)->Skeleton;
         if (skel == null) return;
 
-        var w = Quaternion.Slerp(Quaternion.Identity, deltaRot, 1f / chainBones.Length);
-        var sinHalf = MathF.Sqrt(MathF.Max(0f, 1f - w.W * w.W));
-        if (sinHalf < 1e-4f) return;
-        var axis = Vector3.Normalize(new Vector3(w.X, w.Y, w.Z) / sinHalf);
-        var q = Quaternion.CreateFromAxisAngle(axis, 2f * MathF.Acos(Math.Clamp(w.W, -1f, 1f)) * scale);
-
-        for (var c = 0; c < chainBones.Length; c++)
+        // Index neu bauen, wenn sich Skeleton/Partials ändern
+        var sig = 0;
+        for (var p = 0; p < skel->PartialSkeletonCount; p++)
         {
-            var boneName = chainBones[c];
-            if (string.IsNullOrWhiteSpace(boneName)) continue;
-            var isLastInChain = c == chainBones.Length - 1;
-
-            // 1) Pivot + Namen des Subtrees über ALLE Partials sammeln (vor der Änderung)
-            var subtree = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            Vector3? pivot = null;
+            var ps = skel->PartialSkeletons[p].GetHavokPose(0);
+            if (ps != null && ps->Skeleton != null) sig = sig * 31 + ps->Skeleton->Bones.Length + p;
+        }
+        if ((nint)skel != faceSkel || sig != faceSig)
+        {
+            faceSkel = (nint)skel; faceSig = sig;
+            faceIdx.Clear();
             for (var p = 0; p < skel->PartialSkeletonCount; p++)
             {
-                var pose = skel->PartialSkeletons[p].GetHavokPose(0);
-                if (pose == null || pose->Skeleton == null) continue;
-                var hk = pose->Skeleton;
-                for (var b = 0; b < hk->Bones.Length; b++)
+                var ps = skel->PartialSkeletons[p].GetHavokPose(0);
+                if (ps == null || ps->Skeleton == null) continue;
+                for (var b = 0; b < ps->Skeleton->Bones.Length; b++)
                 {
-                    if (hk->Bones[b].Name.String != boneName) continue;
-                    if (pivot == null)
-                    {
-                        var pt = pose->ModelPose[b].Translation;
-                        pivot = new Vector3(pt.X, pt.Y, pt.Z);
-                    }
-                    for (var i = 0; i < hk->Bones.Length; i++)
-                        if (IsSelfOrDescendant(hk, i, b))
-                            subtree.Add(hk->Bones[i].Name.String ?? string.Empty);
+                    var n = ps->Skeleton->Bones[b].Name.String ?? string.Empty;
+                    if (!faceIdx.TryGetValue(n, out var l)) faceIdx[n] = l = new();
+                    l.Add((p, b));
                 }
             }
-            if (pivot == null) continue;
-            var pv = pivot.Value;
+            ///debug only
+            /*
+            log.Debug($"Face: {faceIdx.Count} Bones indiziert; j_f_mab_l in Partial "
+                + (faceIdx.TryGetValue("j_f_mab_l", out var f) ? string.Join("/", f.Select(x => x.p)) : "- (nicht gefunden)")
+                + ", j_ago in Partial "
+                + (faceIdx.TryGetValue("j_ago", out var g) ? string.Join("/", g.Select(x => x.p)) : "- (nicht gefunden)"));
+            var fk = faceIdx.Keys.Where(k => k.StartsWith("j_f")).ToList();
+            log.Information($"Face-Namen ({fk.Count}): " + string.Join(", ", fk.Count > 0 ? fk : faceIdx.Keys.ToList()));
+            */
+        }
 
-            // 2) Auf alle Partials anwenden, deren Bones (oder Vorfahren) im Subtree liegen
-            for (var p = 0; p < skel->PartialSkeletonCount; p++)
+        var now = GetNowSeconds();
+        var dt = (float)Math.Clamp(now - lastFaceT, 0.0, 0.1);
+        lastFaceT = now;
+        const float Deg = MathF.PI / 180f;
+
+        foreach (var r in config.FaceRules)
+        {
+            if (!r.Enabled || !faceIdx.TryGetValue(r.Bone, out var occ)) continue;
+
+            var goal = r.Force ? 1f : fresh ? Math.Clamp(GetBlend(r.Blend), 0f, 1f) : 0f;
+            faceSm.TryGetValue(r, out var s);
+            s += (goal - s) * MathF.Min(1f, dt * 30f);
+            faceSm[r] = s;
+            if (s < 0.002f) continue;
+
+            foreach (var (p, bi) in occ)
             {
                 var pose = skel->PartialSkeletons[p].GetHavokPose(0);
                 if (pose == null || pose->Skeleton == null) continue;
                 var hk = pose->Skeleton;
+
+                var t0 = pose->ModelPose[bi].Translation;
+                var r0 = pose->ModelPose[bi].Rotation;
+                var pivot = new Vector3(t0.X, t0.Y, t0.Z);
+                var rot = new Quaternion(r0.X, r0.Y, r0.Z, r0.W);
+
+                var lq = Quaternion.CreateFromYawPitchRoll(r.RotY * Deg * s, r.RotX * Deg * s, r.RotZ * Deg * s);
+                var q = Quaternion.Normalize(rot * lq * Quaternion.Conjugate(rot));
+                var dp = Vector3.Transform(new Vector3(r.PosX, r.PosY, r.PosZ) * s, rot);
 
                 for (var i = 0; i < hk->Bones.Length; i++)
                 {
-                    if (!InSubtree(hk, i, subtree)) continue;
+                    if (!IsSelfOrDescendant(hk, i, bi)) continue;
                     var tr = &pose->ModelPose.Data[i];
-                    var nt = pv + Vector3.Transform(
-                        new Vector3(tr->Translation.X, tr->Translation.Y, tr->Translation.Z) - pv, q);
+                    var nt = pivot + Vector3.Transform(new Vector3(tr->Translation.X, tr->Translation.Y, tr->Translation.Z) - pivot, q) + dp;
                     tr->Translation.X = nt.X; tr->Translation.Y = nt.Y; tr->Translation.Z = nt.Z;
-
-                    var nr = Quaternion.Normalize(
-                        q * new Quaternion(tr->Rotation.X, tr->Rotation.Y, tr->Rotation.Z, tr->Rotation.W));
+                    var nr = Quaternion.Normalize(q * new Quaternion(tr->Rotation.X, tr->Rotation.Y, tr->Rotation.Z, tr->Rotation.W));
                     tr->Rotation.X = nr.X; tr->Rotation.Y = nr.Y; tr->Rotation.Z = nr.Z; tr->Rotation.W = nr.W;
                 }
             }
         }
     }
 
+    /// <summary>
+    /// Logs reference pose hierarchy and transform details for facial and head bones of the local player.
+    /// </summary>
+    public void DumpFaceBones()
+    {
+        var lp = objects.LocalPlayer;
+        if (lp == null) return;
+        var draw = ((Character*)lp.Address)->GameObject.DrawObject;
+        if (draw == null || draw->Object.GetObjectType() != ObjectType.CharacterBase) return;
+        var skel = ((CharacterBase*)draw)->Skeleton;
+        if (skel == null) return;
+        for (var p = 0; p < skel->PartialSkeletonCount; p++)
+        {
+            var pose = skel->PartialSkeletons[p].GetHavokPose(0);
+            if (pose == null || pose->Skeleton == null) continue;
+            var hk = pose->Skeleton;
+            for (var b = 0; b < hk->Bones.Length; b++)
+            {
+                var n = hk->Bones[b].Name.String ?? "?";
+                if (!n.StartsWith("j_f_") && n != "j_ago" && n != "j_kao") continue;
+                var pi = hk->ParentIndices[b];
+                var pn = pi >= 0 ? hk->Bones[pi].Name.String : "-";
+                var t = hk->ReferencePose[b].Translation;
+                var r = hk->ReferencePose[b].Rotation;
+                log.Information($"P{p} {n} <- {pn} T({t.X:0.0000},{t.Y:0.0000},{t.Z:0.0000}) R({r.X:0.000},{r.Y:0.000},{r.Z:0.000},{r.W:0.000})");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Determines whether a bone or any of its ancestors up to a bounded depth belongs to the specified bone name set.
+    /// </summary>
+    /// <param name="hk">Pointer to the Havok skeleton.</param>
+    /// <param name="i">The starting bone index.</param>
+    /// <param name="set">The set of bone names representing the target subtree.</param>
+    /// <returns><c>true</c> if a matching bone is found in the ancestor chain; otherwise, <c>false</c>.</returns>
     private static bool InSubtree(hkaSkeleton* hk, int i, HashSet<string> set)
     {
         for (var n = 0; i >= 0 && n < 256; n++)
@@ -565,7 +750,13 @@ public sealed unsafe class VmcHeadReceiver : IDisposable
         }
         return false;
     }
-
+    /// <summary>
+    /// Determines whether bone <paramref name="i"/> is equal to or a descendant of <paramref name="root"/> within a bounded parent traversal.
+    /// </summary>
+    /// <param name="hk">Pointer to the Havok skeleton.</param>
+    /// <param name="i">The candidate bone index.</param>
+    /// <param name="root">The root bone index.</param>
+    /// <returns><c>true</c> if <paramref name="i"/> is <paramref name="root"/> or a descendant of it; otherwise, <c>false</c>.</returns>
     private static bool IsSelfOrDescendant(hkaSkeleton* hk, int i, int root)
     {
         for (var n = 0; i >= 0 && n < 256; n++)
@@ -575,7 +766,18 @@ public sealed unsafe class VmcHeadReceiver : IDisposable
         }
         return false;
     }
+    #endregion
 
+    #region Helper
+
+    /// <summary>
+    /// Reads a null-terminated, 4-byte-aligned UTF-8 string from an OSC buffer starting at <paramref name="offset"/>.
+    /// </summary>
+    /// <param name="buf">The source OSC byte buffer.</param>
+    /// <param name="offset">The starting byte index within <paramref name="buf"/>.</param>
+    /// <param name="value">When successful, outputs the decoded string.</param>
+    /// <param name="nextOffset">When successful, outputs the next 4-byte-aligned index after the string.</param>
+    /// <returns><c>true</c> if a valid null-terminated string was read; otherwise, <c>false</c>.</returns>
     private static bool TryReadOscString(ReadOnlySpan<byte> buf, int offset, out string value, out int nextOffset)
     {
         value = string.Empty;
@@ -599,18 +801,49 @@ public sealed unsafe class VmcHeadReceiver : IDisposable
         return true;
     }
 
-    private static int ReadInt32BE(ReadOnlySpan<byte> s)
-        => (s[0] << 24) | (s[1] << 16) | (s[2] << 8) | s[3];
+    /// <summary>
+    /// Reads a big-endian 32-bit signed integer from the start of the given byte span.
+    /// </summary>
+    /// <param name="s">The byte span containing at least 4 bytes.</param>
+    /// <returns>The parsed 32-bit integer.</returns>
+    private static int ReadInt32BE(ReadOnlySpan<byte> s)=> (s[0] << 24) | (s[1] << 16) | (s[2] << 8) | s[3];
 
+    /// <summary>
+    /// Reads a big-endian 32-bit IEEE 754 single-precision floating-point number from the start of the given byte span.
+    /// </summary>
+    /// <param name="s">The byte span containing at least 4 bytes.</param>
+    /// <returns>The parsed <see cref="float"/> value.</returns>
     private static float ReadSingleBE(ReadOnlySpan<byte> s)
     {
         var raw = ReadInt32BE(s);
         return BitConverter.Int32BitsToSingle(raw);
     }
 
-    private static double GetNowSeconds()
-        => DateTime.UtcNow.Ticks / (double)TimeSpan.TicksPerSecond;
+    /// <summary>
+    /// Gets the current UTC time expressed in seconds since tick zero.
+    /// </summary>
+    /// <returns>Current UTC timestamp in seconds.</returns>
+    private static double GetNowSeconds() => DateTime.UtcNow.Ticks / (double)TimeSpan.TicksPerSecond;
 
+    /// <summary>
+    /// Computes the shortest-arc rotation quaternion that aligns direction vector <paramref name="d"/> with target vector <paramref name="t"/>.
+    /// </summary>
+    /// <param name="d">The initial direction vector.</param>
+    /// <param name="t">The target direction vector.</param>
+    /// <returns>The rotation quaternion from <paramref name="d"/> to <paramref name="t"/>.</returns>
+    private static Quaternion FromTo(Vector3 d, Vector3 t)
+    {
+        var axis = Vector3.Cross(d, t);
+        var len = axis.Length();
+        if (len < 1e-5f) return Quaternion.Identity;
+        return Quaternion.CreateFromAxisAngle(axis / len, MathF.Atan2(len, Vector3.Dot(d, t)));
+    }
+
+    #endregion
+
+    /// <summary>
+    /// Marks the receiver as disposed and stops the active UDP listener.
+    /// </summary>
     public void Dispose()
     {
         if (disposed) return;
