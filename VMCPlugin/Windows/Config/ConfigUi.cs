@@ -38,6 +38,7 @@ internal class ConfigUi : IDisposable
     {
         "General",
         "VRM",
+        "Hair",
         "Presets",
         "Emotes",
         "Face Tracking",
@@ -99,18 +100,21 @@ internal class ConfigUi : IDisposable
                     DrawVmcChains(_config);
                     break;
                 case 2:
-                    DrawPresets();
+                    changed = DrawHair(_config);
                     break;
                 case 3:
-                    DrawEmotes();
+                    DrawPresets();
                     break;
                 case 4:
-                    DrawFace();
+                    DrawEmotes();
                     break;
                 case 5:
+                    DrawFace();
+                    break;
+                case 6:
                     DrawFPV();
                     break;
-                case 6: // Debug
+                case 7: // Debug
                     changed = DrawDebug();
                     break;
             }
@@ -134,6 +138,8 @@ internal class ConfigUi : IDisposable
         _vmcRecv.Enabled = config.Enabled;
 
         Toggle("First Person View", config.FirstPersonLook, v=> config.FirstPersonLook =v);
+
+
     }
 
     private bool DrawPresets()
@@ -192,6 +198,25 @@ internal class ConfigUi : IDisposable
             }
             ImGui.PopID();
         }
+        return ch;
+    }
+
+    private static bool DrawHair(Configuration config)
+    { 
+        bool ch = false;
+        var hp = config.HairPrefix;
+        ImGui.SetNextItemWidth(220f);
+        if (ImGui.InputText("Haar-Bone-Präfixe", ref hp, 128))
+        {
+            config.HairPrefix = hp;
+            ch = true;
+        }
+        ch |= Toggle("Haar-Federn", config.HairSpring, v => config.HairSpring = v);
+        ch |= SliderF("Steifigkeit", config.HairStiff, 10f, 200f, v => config.HairStiff = v, "%.0f");
+        ch |= SliderF("Dämpfung", config.HairDamp, 1f, 30f, v => config.HairDamp = v, "%.1f");
+        ch |= SliderF("Stärke", config.HairStrength, 0f, 1f, v => config.HairStrength = v);
+        ch |= Toggle("Haar-Feder nur im Stand", config.HairOnlyIdle, v => config.HairOnlyIdle = v);
+        ch |= SliderF("Idle-Schwelle (m/s)", config.HairIdleSpeed, 0.02f, 1f, v => config.HairIdleSpeed = v, "%.2f");
         return ch;
     }
 

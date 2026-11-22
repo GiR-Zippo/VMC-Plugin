@@ -16,7 +16,7 @@ using ObjectType = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.ObjectType;
 
 namespace VMCPlugin.BoneManipulation;
 
-public sealed unsafe class VmcHeadReceiver : IDisposable
+public unsafe partial class VmcHeadReceiver : IDisposable
 {
     private CamController cam;
 
@@ -430,6 +430,12 @@ public sealed unsafe class VmcHeadReceiver : IDisposable
 
         if (config.FaceTracking)
             ApplyFace(lp.Address, isFresh);
+
+        if (config.HairSpring)
+        {
+            UpdateIdle(lp.Position);
+            ApplyHair(lp.Address);
+        }
 
         if (!isFresh) return;   // Chain-Regeln (Jaw/Augen) nur mit frischem Stream
     }

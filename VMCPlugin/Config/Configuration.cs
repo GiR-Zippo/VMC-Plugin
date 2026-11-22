@@ -119,6 +119,16 @@ public class Configuration : IPluginConfiguration
     public bool UseFurtherCameraForLargerMounts { get; set; } = true;
     public bool DebugEmotes { get; set; }
 
+    #region Hair
+    public bool HairSpring { get; set; }
+    public string HairPrefix { get; set; } = "j_kami, j_ex";
+    public float HairStiff { get; set; } = 60f;
+    public float HairDamp { get; set; } = 7f;
+    public float HairStrength { get; set; } = 1f;
+    public bool HairOnlyIdle { get; set; } = true;
+    public float HairIdleSpeed { get; set; } = 0.15f;   // m/s
+    #endregion
+
     [NonSerialized]
     private IDalamudPluginInterface pluginInterface;
 
