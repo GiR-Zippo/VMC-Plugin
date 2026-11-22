@@ -87,21 +87,20 @@ public class Configuration : IPluginConfiguration
     public int Version { get; set; } = 1;
 
     public bool Enabled { get; set; } = true;
-    public float DebugMaxDistance { get; set; } = 10f;
     public bool SelfInitialized { get; set; }
     public List<BonePreset> Presets { get; set; } = new();
     public List<EmoteRule> EmoteRules { get; set; } = new();
     public bool FaceTracking { get; set; }
     public List<FaceRule> FaceRules { get; set; } = new();
-
+    public bool DebugEmotes { get; set; }
     public int ActivePreset { get; set; }
     public bool Vrm1 { get; set; }   // Modell in XR Animator ist VRM 1.0
     public float RetargetBlend { get; set; } = 1f;
     public float RetargetFadeSec { get; set; } = 0.4f;
     public float JitterDeg { get; set; } = 0.2f;
 
+    #region FPV Settings
     public bool FirstPersonLook { get; set; }
-
     public float FirstPersonCameraCullingDistance { get; set; } = 4f;
     public bool AllowInGpose { get; set; } = false;
     public bool ReducedMotionInCombat { get; set; } = true;
@@ -117,7 +116,13 @@ public class Configuration : IPluginConfiguration
     public bool RemoveRollInFirstPerson { get; set; } = false;
     public bool ThirdPersonControl { get; set; } = false;
     public bool UseFurtherCameraForLargerMounts { get; set; } = true;
-    public bool DebugEmotes { get; set; }
+
+    public float yawFilterminCut { get; set; } = 0.3f;
+    public float yawFilterBeta { get; set; } = 5f;
+
+    public float pitchFilterminCut { get; set; } = 0.3f;
+    public float pitchFilterBeta { get; set; } = 5f;
+    #endregion
 
     #region Hair
     public bool HairSpring { get; set; }

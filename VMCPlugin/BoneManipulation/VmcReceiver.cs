@@ -12,6 +12,7 @@ using System.Numerics;
 using System.Text;
 using System.Threading;
 using VMCPlugin.Config;
+using VMCPlugin.Offsets;
 using ObjectType = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.ObjectType;
 
 namespace VMCPlugin.BoneManipulation;

@@ -50,12 +50,13 @@ public class CamController : IDisposable
     }
 
     private readonly OneEuro pitchFilter = new();
+    private readonly OneEuro yawFilter = new();
     private float baseH, baseV, relYaw0, pitch0;
     private readonly object vmcLock = new();
     private System.Numerics.Quaternion vmcRot;
     private System.Numerics.Vector3 vmcPos;
     private long vmcTicks;
-
+ 
     public void SetVmcHead(System.Numerics.Quaternion r, System.Numerics.Vector3 p)
     {
         lock (vmcLock) { vmcRot = r; vmcPos = p; vmcTicks = Environment.TickCount64; }
@@ -492,7 +493,7 @@ public class CamController : IDisposable
                                 out var dirvMax);
 
         var relYaw = RotationalDifference(boneYaw, chara->Rotation);   // Kopf relativ zum Körper
-        var pitchF = pitchFilter.Step(bonePitch, 1f, 1f);
+        var pitchF = pitchFilter.Step(bonePitch, configuration.pitchFilterminCut, configuration.pitchFilterBeta);
         float dirH, dirV;
 
         if (previousTickWasFirstPerson)
@@ -500,7 +501,7 @@ public class CamController : IDisposable
             baseH = RotateDir(baseH + dirHDiff);   // nur Maus
             baseV += dirVDiff;
             dirH = baseH;
-            dirV = baseV+ pitchFilter.Step(headRot.Y, 20f, 5f); // add Y axis
+            dirV = baseV+ pitchFilter.Step(headRot.Y, 0.1f, 5f); // add Y axis
             if (!reducedMotion)
             {
                 dirH += RotationalDifference(relYaw, relYaw0);
@@ -552,6 +553,14 @@ public class CamController : IDisposable
         realDirH = dirH;
         realDirV = dirV;
 
+        if (!InputManager.IsRightMouseDown() && !InputManager.IsLeftMouseDown())
+        {
+            var head = yawFilter.Step(5f * (headRot.X - 0.7071f), configuration.yawFilterminCut, configuration.yawFilterBeta);
+            dirH = RotateDir(chara->Rotation + head);
+            baseH = dirH;
+        }
+        else yawFilter.Reset();   // nach der Mausbenutzung ohne Nachgleiten neu starten
+
         // Apply tilt to camera, accounting for how far we are from looking straight ahead and how much the head is pitched
         if (configuration.RemoveRollInFirstPerson || reducedMotion)
         {
@@ -583,7 +592,9 @@ public class CamController : IDisposable
         // Apply FOV and rotational changes
         Cam->FoV = configuration.FirstPersonFieldOfView / 100f;
         Cam->DirV = RotateDir(dirV);
-        Cam->DirH = dirH;
+        Cam->DirH = RotateDir(dirH);
+
+        
 
         // In first person with RealFirstPerson enabled, override position
         nextCameraPosition = boneModelPos;

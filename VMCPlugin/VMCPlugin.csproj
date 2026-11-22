@@ -10,7 +10,7 @@
     <UseWpf>true</UseWpf>
     <Description>TestPlugin.</Description>
     <PackageProjectUrl>https://github.com/GiR-Zippo/VMC-Plugin</PackageProjectUrl>
-    <Version>0.0.3.2</Version>
+    <Version>0.0.3.3</Version>
   </PropertyGroup>
 
   <PropertyGroup>

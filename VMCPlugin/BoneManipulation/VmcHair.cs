@@ -22,6 +22,7 @@ namespace VMCPlugin.BoneManipulation
         private bool idle = true;
         private float hairW;
 
+
         private void UpdateIdle(Vector3 pos)
         {
             var now = GetNowSeconds();
@@ -29,7 +30,8 @@ namespace VMCPlugin.BoneManipulation
             lastPosT = now;
             var prev = lastPos;
             lastPos = pos;
-            if (dt <= 0.0001 || dt > 0.25) return;   // Pause/Teleport: Zustand behalten
+            if (dt <= 0.0001 || dt > 0.25) 
+                return;   // Pause/Teleport: Zustand behalten
             idle = Vector3.Distance(pos, prev) / (float)dt < config.HairIdleSpeed;
         }
 

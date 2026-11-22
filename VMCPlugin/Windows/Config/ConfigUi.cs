@@ -413,7 +413,15 @@ internal class ConfigUi : IDisposable
         ch |= SliderF("Camera culling distance (m)", _config.FirstPersonCameraCullingDistance, 0f, 10f, v => _config.FirstPersonCameraCullingDistance = v, "%.1f");
 
         ImGui.Spacing();
-        ImGui.TextDisabled("Sonstiges");
+        ImGui.TextDisabled("Smoothing");
+        ch |= SliderF("yaw-Filter minCut", _config.yawFilterminCut, 0, 20, v => _config.yawFilterminCut = v);
+        ch |= SliderF("yaw-Filter Beta", _config.yawFilterBeta, 0, 50, v => _config.yawFilterBeta = v);
+        ch |= SliderF("pitch-Filter minCut", _config.pitchFilterminCut, 0, 20, v => _config.pitchFilterminCut = v);
+        ch |= SliderF("pitch-Filter Beta", _config.pitchFilterBeta, 0, 50, v => _config.pitchFilterBeta = v);
+
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("Misc");
         ch |= Toggle("Allow first person tracking in Gpose", _config.AllowInGpose, v => _config.AllowInGpose = v);
         ch |= Toggle("Enable third person camera control", _config.ThirdPersonControl, v => _config.ThirdPersonControl = v);
         ch |= Toggle("Use further camera for larger mounts", _config.UseFurtherCameraForLargerMounts, v => _config.UseFurtherCameraForLargerMounts = v);
