@@ -95,7 +95,7 @@ jobs:
           file_pattern: "./PluginDir/*.json"
 
       - name: Move latest build to Release
-        run: Move-Item -Path ./MareSynchronos/bin/x64/Release/VMCPlugin/* -Destination ./PluginDir/ -Force
+        run: Move-Item -Path ./VMCPlugin/bin/x64/Release/VMCPlugin/* -Destination ./PluginDir/ -Force
         
       - name: Upload Release Asset
         id: upload-release-asset 
