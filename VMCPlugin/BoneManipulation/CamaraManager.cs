@@ -522,10 +522,10 @@ public class CamController : IDisposable
             previousTickWasFirstPerson = true;
         }
 
-        if (dirV <= -1.9f)
-            dirV = -1.9f;
-        if (dirV >= 1.3f)
-            dirV = 1.3f;
+        if (dirV <= configuration.MaxPitchDown)
+            dirV = configuration.MaxPitchDown;
+        if (dirV >= configuration.MaxPitchUp)
+            dirV = configuration.MaxPitchUp;
 
         // Keep DirV in reasonable range to avoid camera flipping issues
         dirV = dirV % (2 * MathF.PI);

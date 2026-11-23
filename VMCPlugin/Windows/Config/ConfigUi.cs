@@ -412,6 +412,9 @@ internal class ConfigUi : IDisposable
         ch |= SliderI("Field of view in first person", _config.FirstPersonFieldOfView, CamController.MinFoV, CamController.MaxFoV, v => _config.FirstPersonFieldOfView = v, "%d");
         ch |= SliderF("Camera culling distance (m)", _config.FirstPersonCameraCullingDistance, 0f, 10f, v => _config.FirstPersonCameraCullingDistance = v, "%.1f");
 
+        ch |= SliderF("Max pitch Up", _config.MaxPitchUp, 0f, 3f, v => _config.MaxPitchUp = v, "%.1f");
+        ch |= SliderF("Max pitch Down", _config.MaxPitchDown, -3f, 0f, v => _config.MaxPitchDown = v, "%.1f");
+
         ImGui.Spacing();
         ImGui.TextDisabled("Smoothing");
         ch |= SliderF("yaw-Filter minCut", _config.yawFilterminCut, 0, 20, v => _config.yawFilterminCut = v);

@@ -122,6 +122,9 @@ public class Configuration : IPluginConfiguration
     #endregion
 
     #region FPV Settings
+    public float MaxPitchDown { get; set; } = -1.9f;
+    public float MaxPitchUp { get; set; } = 1.3f;
+
     public float FirstPersonCameraCullingDistance { get; set; } = 4f;
     public bool AllowInGpose { get; set; } = false;
     public bool ReducedMotionInCombat { get; set; } = true;
