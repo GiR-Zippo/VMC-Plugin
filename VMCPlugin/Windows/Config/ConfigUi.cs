@@ -419,6 +419,10 @@ internal class ConfigUi : IDisposable
         ch |= SliderF("pitch-Filter minCut", _config.pitchFilterminCut, 0, 20, v => _config.pitchFilterminCut = v);
         ch |= SliderF("pitch-Filter Beta", _config.pitchFilterBeta, 0, 50, v => _config.pitchFilterBeta = v);
 
+        ImGui.Spacing();
+        ImGui.TextDisabled("Multiplier");
+        ch |= SliderF("pitch-Multiplier", _config.pitchMultiply, 0, 10, v => _config.pitchMultiply = v);
+        ch |= SliderF("yaw-Multiplier", _config.yawMultiply, 0, 2, v => _config.yawMultiply = v);
 
         ImGui.Spacing();
         ImGui.TextDisabled("Misc");

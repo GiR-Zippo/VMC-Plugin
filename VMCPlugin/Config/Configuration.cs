@@ -7,6 +7,7 @@ using Dalamud.Configuration;
 using Dalamud.Plugin;
 using System;
 using System.Collections.Generic;
+using System.IO;
 
 namespace VMCPlugin.Config;
 
@@ -85,22 +86,42 @@ public sealed class FaceRule
 public class Configuration : IPluginConfiguration
 {
     public int Version { get; set; } = 1;
-
-    public bool Enabled { get; set; } = true;
     public bool SelfInitialized { get; set; }
-    public List<BonePreset> Presets { get; set; } = new();
-    public List<EmoteRule> EmoteRules { get; set; } = new();
-    public bool FaceTracking { get; set; }
-    public List<FaceRule> FaceRules { get; set; } = new();
-    public bool DebugEmotes { get; set; }
-    public int ActivePreset { get; set; }
+
+    #region General
+    public bool Enabled { get; set; } = true;
+    public bool FirstPersonLook { get; set; }
+    #endregion
+
+    #region VRM Settings
     public bool Vrm1 { get; set; }   // Modell in XR Animator ist VRM 1.0
     public float RetargetBlend { get; set; } = 1f;
     public float RetargetFadeSec { get; set; } = 0.4f;
     public float JitterDeg { get; set; } = 0.2f;
+    #endregion
+
+    #region Hair
+    public bool HairSpring { get; set; }
+    public string HairPrefix { get; set; } = "j_kami, j_ex";
+    public float HairStiff { get; set; } = 60f;
+    public float HairDamp { get; set; } = 7f;
+    public float HairStrength { get; set; } = 1f;
+    public bool HairOnlyIdle { get; set; } = true;
+    public float HairIdleSpeed { get; set; } = 0.15f;   // m/s
+    #endregion
+
+    #region Capture Presets
+    public List<BonePreset> Presets { get; set; } = new();
+    public int ActivePreset { get; set; }
+
+    #endregion
+
+    #region Face Tracking
+    public bool FaceTracking { get; set; }
+    public List<FaceRule> FaceRules { get; set; } = new();
+    #endregion
 
     #region FPV Settings
-    public bool FirstPersonLook { get; set; }
     public float FirstPersonCameraCullingDistance { get; set; } = 4f;
     public bool AllowInGpose { get; set; } = false;
     public bool ReducedMotionInCombat { get; set; } = true;
@@ -122,17 +143,14 @@ public class Configuration : IPluginConfiguration
 
     public float pitchFilterminCut { get; set; } = 0.3f;
     public float pitchFilterBeta { get; set; } = 5f;
+
+    public float pitchMultiply { get; set; } = 1.0f;
+    public float yawMultiply { get; set; } = 1.0f;
     #endregion
 
-    #region Hair
-    public bool HairSpring { get; set; }
-    public string HairPrefix { get; set; } = "j_kami, j_ex";
-    public float HairStiff { get; set; } = 60f;
-    public float HairDamp { get; set; } = 7f;
-    public float HairStrength { get; set; } = 1f;
-    public bool HairOnlyIdle { get; set; } = true;
-    public float HairIdleSpeed { get; set; } = 0.15f;   // m/s
-    #endregion
+    public List<EmoteRule> EmoteRules { get; set; } = new();
+    public bool DebugEmotes { get; set; }
+
 
     [NonSerialized]
     private IDalamudPluginInterface pluginInterface;

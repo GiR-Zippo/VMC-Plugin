@@ -501,7 +501,7 @@ public class CamController : IDisposable
             baseH = RotateDir(baseH + dirHDiff);   // nur Maus
             baseV += dirVDiff;
             dirH = baseH;
-            dirV = baseV+ pitchFilter.Step(headRot.Y, 0.1f, 5f); // add Y axis
+            dirV = baseV+ (pitchFilter.Step(headRot.Y, configuration.pitchFilterminCut, configuration.pitchFilterBeta)*configuration.pitchMultiply); // add Y axis
             if (!reducedMotion)
             {
                 dirH += RotationalDifference(relYaw, relYaw0);
@@ -555,7 +555,7 @@ public class CamController : IDisposable
 
         if (!InputManager.IsRightMouseDown() && !InputManager.IsLeftMouseDown())
         {
-            var head = yawFilter.Step(5f * (headRot.X - 0.7071f), configuration.yawFilterminCut, configuration.yawFilterBeta);
+            var head = yawFilter.Step(5f * (headRot.X - 0.7071f), configuration.yawFilterminCut, configuration.yawFilterBeta)*configuration.yawMultiply;
             dirH = RotateDir(chara->Rotation + head);
             baseH = dirH;
         }
