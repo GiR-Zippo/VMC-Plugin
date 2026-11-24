@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using VMCPlugin.Config;
 using VMCPlugin.Offsets;
+using static FFXIVClientStructs.FFXIV.Client.UI.Misc.AozNoteModule;
 
 namespace VMCPlugin.BoneManipulation
 {
@@ -14,11 +15,11 @@ namespace VMCPlugin.BoneManipulation
 
         public string StateText => $"Mode {stMode} | Pose {stPose} | Emote {stEmote} | Kampf {stCombat} | Preset: {activeName}";
 
-        private HashSet<string>? ActiveSet => activePreset?.Bones;
-        private bool ActiveSetLimitAxis => activeRule?.LimitAxis ?? false;
+        private HashSet<string>? ActiveSet => activeSet;
+        private bool ActiveSetLimitAxis => limitAxis;
 
-        private BonePreset? activePreset;
-        private PresetRule? activeRule;
+        private HashSet<string>? activeSet;
+        private bool limitAxis;
 
         private unsafe void ReadState()
         {
@@ -40,21 +41,24 @@ namespace VMCPlugin.BoneManipulation
             _ => false
         };
 
-        private void ResolvePreset()   // einmal pro Frame, direkt nach ReadState()
+        private void ResolvePreset()   // einmal pro Frame
         {
-            activePreset = null; activeRule = null;
+            activeSet = null; limitAxis = false;
             if (config.Presets.Count == 0) return;
 
-            activePreset = config.Presets[Math.Clamp(config.ActivePreset, 0, config.Presets.Count - 1)];
+            var p = config.Presets[Math.Clamp(config.ActivePreset, 0, config.Presets.Count - 1)];
             foreach (var r in config.PresetRules)
             {
                 if (!r.Enabled || !Matches(r)) continue;
-                var hit = config.Presets.Find(x => x.Name == r.Preset);
-                if (hit == null) continue;                 // gleiche Regel wie bei den Bones
-                activePreset = hit; activeRule = r;
+                BonePreset? hit = null;
+                foreach (var x in config.Presets)
+                    if (x.Name == r.Preset) { hit = x; break; }   // ohne Lambda, ohne Allokation
+                if (hit == null) continue;
+                p = hit; limitAxis = r.LimitAxis;
                 break;
             }
-            activeName = activePreset.Name;
+            activeSet = p.Bones;
+            activeName = p.Name;
         }
     }
 }

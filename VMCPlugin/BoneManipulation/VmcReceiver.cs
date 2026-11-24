@@ -34,6 +34,7 @@ public unsafe partial class VmcHeadReceiver : IDisposable
     private Quaternion headRef = Quaternion.Identity;
     private float relW;
     public float PoseHeadLimitDeg { get; set; } = 35f;
+    private int poseSig;
     //---
 
     private readonly record struct RNode(string Vmc, string Xiv, string? Parent, bool Lift, float Sx);
@@ -462,13 +463,17 @@ public unsafe partial class VmcHeadReceiver : IDisposable
         var lp = objects.LocalPlayer;
         if (lp == null) return;
 
-        var inPose = InAnimPose();
-        if (inPose && !animPose)
-            enterPose = true;
-        animPose = inPose;
 
         ReadState();
         ResolvePreset();
+
+        var inPose = InAnimPose();
+        var sig = (stMode << 24) | (stPose << 16) | stEmote;
+        if (inPose && (!animPose || sig != poseSig))
+            enterPose = true;   // Eintritt oder Wechsel der Pose → neue Mitte
+        animPose = inPose;
+        poseSig = sig;
+
         ApplyFullRetarget(lp.Address, boneSnapshot, timeSnapshot);
 
         if (config.FaceTracking)
@@ -541,8 +546,8 @@ public unsafe partial class VmcHeadReceiver : IDisposable
             var off = active != null && !active.Contains(n.Vmc);
 
             //Disable condition (when in emote mode)
-            //if (ActiveSetLimitAxis)
-              //  off |= animPose; // && n.Vmc == "Neck";
+            if (ActiveSetLimitAxis)
+                off |= animPose && n.Vmc == "Neck";
 
             var goal = hasData && fresh && !off ? Math.Clamp(config.RetargetBlend, 0f, 1f) : 0f;
             retargetW.TryGetValue(n.Vmc, out var w);
@@ -564,7 +569,7 @@ public unsafe partial class VmcHeadReceiver : IDisposable
             var delta = Quaternion.Normalize(target * Quaternion.Conjugate(cur));
 
             //Head relative to pose when in pose loop
-            //if (n.Vmc == "Head")
+            if (n.Vmc == "Head")
             {
                 if (enterPose) { headRef = v; enterPose = false; }   // aktuelle Kopfhaltung = Mitte der Pose
                 var fade = MathF.Max(0.01f, config.RetargetFadeSec);
@@ -599,8 +604,14 @@ public unsafe partial class VmcHeadReceiver : IDisposable
                 {
                     var tr = &hp->ModelPose.Data[0];   // Bone 0 = j_kao im Kopf-Skeleton
                     var rot = new Quaternion(tr->Rotation.X, tr->Rotation.Y, tr->Rotation.Z, tr->Rotation.W);
-                    if (relW > 0.001f)   // in Pose: Bewegung relativ zur Mitte statt Animations-Haltung
-                        rot = Quaternion.Slerp(rot, Quaternion.Normalize(headDelta * headRestRot), relW);
+                    cam.SetPoseBlendState(ActiveSetLimitAxis);
+                    if (ActiveSetLimitAxis)
+                        cam.SetPoseBlend(relW);
+                    else
+                    {
+                        if (relW > 0.001f)   // in Pose: Bewegung relativ zur Mitte statt Animations-Haltung
+                            rot = Quaternion.Slerp(rot, Quaternion.Normalize(headDelta * headRestRot), relW);
+                    }
                     cam.SetVmcHead(rot, new Vector3(tr->Translation.X, tr->Translation.Y, tr->Translation.Z));
                 }
             }

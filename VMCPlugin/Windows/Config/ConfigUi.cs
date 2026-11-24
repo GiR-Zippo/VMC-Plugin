@@ -159,25 +159,25 @@ internal class ConfigUi : IDisposable
                 case 1:
                     changed = DrawPresetRules();
                     break;
-                case 3:
+                case 2:
                     changed = DrawVmcChains();
                     break;
-                case 4:
+                case 3:
                     changed = DrawHair();
                     break;
-                case 5:
+                case 4:
                     changed = DrawPresets();
                     break;
-                case 6:
+                case 5:
                     changed = DrawEmotes();
                     break;
-                case 7:
+                case 6:
                     changed = DrawFace();
                     break;
-                case 8:
+                case 7:
                     changed = DrawFPV();
                     break;
-                case 9: // Debug
+                case 8: // Debug
                     changed = DrawDebug();
                     break;
             }

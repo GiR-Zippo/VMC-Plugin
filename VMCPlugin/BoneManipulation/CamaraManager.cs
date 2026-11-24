@@ -97,6 +97,11 @@ public class CamController : IDisposable
 
     private const int HeadSkeletonIndex = 1;
 
+    private volatile float poseBlend;
+    public void SetPoseBlend(float w) => poseBlend = w;
+
+    private bool poseBlendEnabled { get; set; } = false;
+    public bool SetPoseBlendState(bool state) => poseBlendEnabled = state;
 
     // 0.1f and 0.12f are empirical adjustments to better match eye position, based on female miqo'te
     private FFXIVClientStructs.FFXIV.Common.Math.Vector3 FirstPersonOffset => new(configuration.FirstPersonHeadOffsetSideward, configuration.FirstPersonHeadOffsetUpward + 0.1f, configuration.FirstPersonHeadOffsetForward + 0.12f);
@@ -489,8 +494,8 @@ public class CamController : IDisposable
 
         // Determine DirV and DirH limits
         CalculateDirectionRange(bonePitch, configuration.FirstPersonHeadPitchLimit,
-                                configuration.FirstPersonHeadRotationPitch * DegreesToRadians, out var dirvMin,
-                                out var dirvMax);
+                                                configuration.FirstPersonHeadRotationPitch * DegreesToRadians, out var dirvMin,
+                                                out var dirvMax);
 
         var relYaw = RotationalDifference(boneYaw, chara->Rotation);   // Kopf relativ zum Körper
         var pitchF = pitchFilter.Step(bonePitch, configuration.pitchFilterminCut, configuration.pitchFilterBeta);
@@ -522,10 +527,13 @@ public class CamController : IDisposable
             previousTickWasFirstPerson = true;
         }
 
-        if (dirV <= configuration.MaxPitchDown)
-            dirV = configuration.MaxPitchDown;
-        if (dirV >= configuration.MaxPitchUp)
-            dirV = configuration.MaxPitchUp;
+        if (!poseBlendEnabled)
+        {
+            if (dirV <= configuration.MaxPitchDown)
+                dirV = configuration.MaxPitchDown;
+            if (dirV >= configuration.MaxPitchUp)
+                dirV = configuration.MaxPitchUp;
+        }
 
         // Keep DirV in reasonable range to avoid camera flipping issues
         dirV = dirV % (2 * MathF.PI);
@@ -560,8 +568,14 @@ public class CamController : IDisposable
 
         if (!InputManager.IsRightMouseDown() && !InputManager.IsLeftMouseDown())
         {
-            var head = yawFilter.Step(5f * (headRot.X - 0.7071f), configuration.yawFilterminCut, configuration.yawFilterBeta)*configuration.yawMultiply;
-            dirH = RotateDir(chara->Rotation + head);
+            var head = yawFilter.Step(5f * (headRot.X - 0.7071f), configuration.yawFilterminCut, configuration.yawFilterBeta) * configuration.yawMultiply;
+            if (poseBlendEnabled)
+            {
+                var stand = RotateDir(chara->Rotation + head);
+                dirH = RotateDir(stand + RotationalDifference(boneYaw, stand) * poseBlend);   // in Pose: echter Kopf-Yaw
+            }
+            else
+                dirH = RotateDir(chara->Rotation + head);
             baseH = dirH;
         }
         else yawFilter.Reset();   // nach der Mausbenutzung ohne Nachgleiten neu starten
