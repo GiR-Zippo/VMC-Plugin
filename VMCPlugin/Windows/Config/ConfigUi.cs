@@ -1,10 +1,13 @@
 ﻿using Dalamud.Bindings.ImGui;
 using Dalamud.Plugin;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Printing;
 using VMCPlugin.BoneManipulation;
 using VMCPlugin.Config;
+using VMCPlugin.Offsets;
 
 namespace VMCPlugin.Windows.Config;
 
@@ -16,6 +19,62 @@ internal class ConfigUi : IDisposable
     private VmcHeadReceiver _vmcRecv;
 
     private int _selectedTab = 0;
+
+    private List<(uint Id, string Name)>? _emotes;
+    private string _emoteFilter = "";
+
+    private static class EnumCache<T> where T : struct, Enum
+    {
+        public static readonly T[] Vals = Enum.GetValues<T>();
+        public static readonly string[] Names = Enum.GetNames<T>();   // gleiche Reihenfolge wie Vals
+    }
+
+    private static bool EnumCombo<T>(string id, ref int value) where T : struct, Enum
+    {
+        var target = value;   // Kopie für die Lambda
+        var cur = Array.FindIndex(EnumCache<T>.Vals, v => Convert.ToInt32(v) == target);
+        ImGui.SetNextItemWidth(130f);
+        if (!ImGui.Combo(id, ref cur, EnumCache<T>.Names, EnumCache<T>.Names.Length) || cur < 0) return false;
+        value = Convert.ToInt32(EnumCache<T>.Vals[cur]);
+        return true;
+    }
+
+    private List<(uint Id, string Name)> Emotes()
+    {
+        if (_emotes != null) return _emotes;
+        _emotes = new();
+        if (Api.Data.GetExcelSheet<Lumina.Excel.Sheets.Emote>() is { } sheet)
+            foreach (var e in sheet)
+            {
+                var n = e.Name.ExtractText();
+                if (!string.IsNullOrWhiteSpace(n)) _emotes.Add((e.RowId, n));
+            }
+        _emotes.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+        return _emotes;
+    }
+
+    private bool EmoteCombo(PresetRule r)
+    {
+        var ch = false;
+        var cur = r.Value == 0 ? "(Emote wählen)" : Emotes().Find(x => x.Id == r.Value).Name ?? $"#{r.Value}";
+
+        ImGui.SetNextItemWidth(200f);
+        if (ImGui.BeginCombo("##emote", cur))
+        {
+            ImGui.SetNextItemWidth(-1f);
+            ImGui.InputTextWithHint("##flt", "Suchen…", ref _emoteFilter, 64);
+            foreach (var (id, name) in Emotes())
+            {
+                if (_emoteFilter.Length > 0 && !name.Contains(_emoteFilter, StringComparison.OrdinalIgnoreCase)) continue;
+                if (ImGui.Selectable($"{name}##{id}", id == r.Value)) { r.Value = (int)id; ch = true; }
+            }
+            ImGui.EndCombo();
+        }
+        ImGui.SameLine();
+        //if (ImGui.SmallButton("Jetzt")) { r.Value = _vmcRecv.CurrentEmoteId; ch = true; }
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Das Emote übernehmen, das der Charakter gerade ausführt");
+        return ch;
+    }
 
     private static readonly (string Name, Func<string, bool> Has)[] _Groups =
     {
@@ -37,6 +96,7 @@ internal class ConfigUi : IDisposable
     private static readonly string[] _Tabs =
     {
         "General",
+        "Preset Rules",
         "VRM",
         "Hair",
         "Presets",
@@ -94,27 +154,30 @@ internal class ConfigUi : IDisposable
             switch (_selectedTab)
             {
                 case 0:
-                    DrawGeneral(_config);
+                    changed = DrawGeneral();
                     break;
-                case 1: // Allgemein
-                    DrawVmcChains(_config);
-                    break;
-                case 2:
-                    changed = DrawHair(_config);
+                case 1:
+                    changed = DrawPresetRules();
                     break;
                 case 3:
-                    DrawPresets();
+                    changed = DrawVmcChains();
                     break;
                 case 4:
-                    DrawEmotes();
+                    changed = DrawHair();
                     break;
                 case 5:
-                    DrawFace();
+                    changed = DrawPresets();
                     break;
                 case 6:
-                    DrawFPV();
+                    changed = DrawEmotes();
                     break;
-                case 7: // Debug
+                case 7:
+                    changed = DrawFace();
+                    break;
+                case 8:
+                    changed = DrawFPV();
+                    break;
+                case 9: // Debug
                     changed = DrawDebug();
                     break;
             }
@@ -132,12 +195,81 @@ internal class ConfigUi : IDisposable
             _pi.SavePluginConfig(_config);
     }
 
-    private void DrawGeneral(Configuration config)
+    private bool DrawGeneral()
     {
-        Toggle("Enable Plugin", config.Enabled, v => config.Enabled = v);
-        _vmcRecv.Enabled = config.Enabled;
+        bool ch = false;
+        ch |= Toggle("Enable Plugin", _config.Enabled, v => _config.Enabled = v);
+        _vmcRecv.Enabled = _config.Enabled;
 
-        Toggle("First Person View", config.FirstPersonLook, v=> config.FirstPersonLook =v);
+        ch |= Toggle("First Person View", _config.FirstPersonLook, v=> _config.FirstPersonLook =v);
+        return ch;
+    }
+
+    private bool DrawPresetRules()
+    {
+        bool ch = false;
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.TextDisabled("Automatik (erste passende Regel gewinnt)");
+        //ImGui.TextUnformatted(_vmcRecv.StateText);   // zeigt die aktuellen Werte zum Eintragen
+
+        var rules = _config.PresetRules;
+        var rm = -1;
+        for (var i = 0; i < rules.Count; i++)
+        {
+            var r = rules[i];
+            ImGui.PushID(7000 + i);
+
+            ch |= Toggle("##on", r.Enabled, v => r.Enabled = v);
+            ImGui.SameLine();
+
+            ch |= Toggle("##laxis", r.LimitAxis, v => r.LimitAxis = v);
+            ImGui.SameLine();
+
+
+            var k = (int)r.Kind;
+            ImGui.SetNextItemWidth(90f);
+            if (ImGui.Combo("##k", ref k, EnumCache<TriggerKind>.Names, EnumCache<TriggerKind>.Names.Length)) { r.Kind = (TriggerKind)k; ch = true; }
+            ImGui.SameLine();
+
+            var v = r.Value;
+            switch (r.Kind)
+            {
+                case TriggerKind.Emote:
+                    ch |= EmoteCombo(r);
+                    ImGui.SameLine();
+                    break;
+                case TriggerKind.EmoteBlend:
+                    r.Value = 255;
+                    ch = true;
+                    ImGui.SameLine();
+                    break;
+
+                case TriggerKind.Mode:
+                    if (EnumCombo<FFXIVClientStructs.FFXIV.Client.Game.Character.CharacterModes>("##v", ref v)) { r.Value = v; ch = true; }
+                    ImGui.SameLine();
+                    break;
+                case TriggerKind.Pose:
+                    if (EnumCombo<FFXIVClientStructs.FFXIV.Client.Game.Control.EmoteController.PoseType>("##v", ref v)) { r.Value = v; ch = true; }
+                    ImGui.SameLine();
+                    break;
+            }
+
+            ImGui.SetNextItemWidth(160f);
+            if (ImGui.BeginCombo("##p", string.IsNullOrEmpty(r.Preset) ? "(Preset)" : r.Preset))
+            {
+                foreach (var p in _config.Presets)
+                    if (ImGui.Selectable(p.Name, p.Name == r.Preset)) { r.Preset = p.Name; ch = true; }
+                ImGui.EndCombo();
+            }
+            ImGui.SameLine();
+            if (ImGui.SmallButton("x")) rm = i;
+
+            ImGui.PopID();
+        }
+        if (rm >= 0) { rules.RemoveAt(rm); ch = true; }
+        if (ImGui.Button("+ Regel##auto")) { rules.Add(new PresetRule()); ch = true; }
+        return ch;
     }
 
     private bool DrawPresets()
@@ -199,41 +331,41 @@ internal class ConfigUi : IDisposable
         return ch;
     }
 
-    private static bool DrawHair(Configuration config)
+    private bool DrawHair()
     { 
         bool ch = false;
-        var hp = config.HairPrefix;
+        var hp = _config.HairPrefix;
         ImGui.SetNextItemWidth(220f);
         if (ImGui.InputText("Haar-Bone-Prefixes", ref hp, 128))
         {
-            config.HairPrefix = hp;
+            _config.HairPrefix = hp;
             ch = true;
         }
-        ch |= Toggle("Hair-Springy", config.HairSpring, v => config.HairSpring = v);
-        ch |= SliderF("Stiffnes", config.HairStiff, 10f, 200f, v => config.HairStiff = v, "%.0f");
-        ch |= SliderF("Dampen", config.HairDamp, 1f, 30f, v => config.HairDamp = v, "%.1f");
-        ch |= SliderF("Strongnes", config.HairStrength, 0f, 1f, v => config.HairStrength = v);
-        ch |= Toggle("Haar-Springs only when idle", config.HairOnlyIdle, v => config.HairOnlyIdle = v);
-        ch |= SliderF("Idle-Threshold (m/s)", config.HairIdleSpeed, 0.02f, 1f, v => config.HairIdleSpeed = v, "%.2f");
+        ch |= Toggle("Hair-Springy", _config.HairSpring, v => _config.HairSpring = v);
+        ch |= SliderF("Stiffnes", _config.HairStiff, 10f, 200f, v => _config.HairStiff = v, "%.0f");
+        ch |= SliderF("Dampen", _config.HairDamp, 1f, 30f, v => _config.HairDamp = v, "%.1f");
+        ch |= SliderF("Strongnes", _config.HairStrength, 0f, 1f, v => _config.HairStrength = v);
+        ch |= Toggle("Haar-Springs only when idle", _config.HairOnlyIdle, v => _config.HairOnlyIdle = v);
+        ch |= SliderF("Idle-Threshold (m/s)", _config.HairIdleSpeed, 0.02f, 1f, v => _config.HairIdleSpeed = v, "%.2f");
         return ch;
     }
 
     private static readonly string[] AxisNames = { "X", "Y", "Z" };
-    private static bool DrawVmcChains(Configuration config)
+    private bool DrawVmcChains()
     {
         var changed = false;
 
         ImGui.SameLine();
         ImGui.SetNextItemWidth(260f);
 
-        changed |= Toggle("VRM1", config.Vrm1, v => config.Vrm1 = v);
+        changed |= Toggle("VRM1", _config.Vrm1, v => _config.Vrm1 = v);
 
-        var bl = config.RetargetBlend;
-        if (ImGui.SliderFloat("Mocap-Portion", ref bl, 0f, 1f)) { config.RetargetBlend = bl; changed = true; }
-        var fd = config.RetargetFadeSec;
-        if (ImGui.SliderFloat("Fade (s)", ref fd, 0.05f, 2f)) { config.RetargetFadeSec = fd; changed = true; }
-        var jd = config.JitterDeg;
-        if (ImGui.SliderFloat("Jitter-Threshold (°)", ref jd, 0f, 2f, "%.2f")) { config.JitterDeg = jd; changed = true; }
+        var bl = _config.RetargetBlend;
+        if (ImGui.SliderFloat("Mocap-Portion", ref bl, 0f, 1f)) { _config.RetargetBlend = bl; changed = true; }
+        var fd = _config.RetargetFadeSec;
+        if (ImGui.SliderFloat("Fade (s)", ref fd, 0.05f, 2f)) { _config.RetargetFadeSec = fd; changed = true; }
+        var jd = _config.JitterDeg;
+        if (ImGui.SliderFloat("Jitter-Threshold (°)", ref jd, 0f, 2f, "%.2f")) { _config.JitterDeg = jd; changed = true; }
         return changed;
     }
 
@@ -433,6 +565,11 @@ internal class ConfigUi : IDisposable
         ch |= Toggle("Enable third person camera control", _config.ThirdPersonControl, v => _config.ThirdPersonControl = v);
         ch |= Toggle("Use further camera for larger mounts", _config.UseFurtherCameraForLargerMounts, v => _config.UseFurtherCameraForLargerMounts = v);
 
+        ch |= Toggle("Char dreht bei extremer Kopfdrehung (Standing)", _config.TurnBodyStanding, v => _config.TurnBodyStanding = v);
+        ch |= Toggle("Char dreht bei extremer Kopfdrehung (Walking)", _config.TurnBodyWalking, v => _config.TurnBodyWalking = v);
+        ch |= SliderF("Start-Winkel (°)", _config.TurnStartDeg, 20f, 100f, v => _config.TurnStartDeg = v, "%.0f");
+        ch |= SliderF("Max. Tempo (°/s)", _config.TurnSpeedDeg, 10f, 180f, v => _config.TurnSpeedDeg = v, "%.0f");
+        ch |= SliderF("Mittelpunkt (°)", _config.TurnCenterDeg, -45f, 45f, v => _config.TurnCenterDeg = v, "%.1f");
         return ch;
     }
 

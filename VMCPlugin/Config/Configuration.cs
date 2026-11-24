@@ -7,9 +7,21 @@ using Dalamud.Configuration;
 using Dalamud.Plugin;
 using System;
 using System.Collections.Generic;
-using System.IO;
 
 namespace VMCPlugin.Config;
+
+
+public enum TriggerKind { Mode, Pose, Emote, EmoteBlend, Combat }
+[Serializable]
+public sealed class PresetRule
+{
+    public bool Enabled { get; set; } = true;
+    public TriggerKind Kind { get; set; } = TriggerKind.Combat;
+    public int Value { get; set; }          // Mode-/Pose-/Emote-ID, bei Combat ohne Bedeutung
+    public string Preset { get; set; } = "";   // Name des Presets
+    public bool LimitAxis { get; set; } = false;
+
+}
 
 [Serializable]
 public sealed class BonePreset
@@ -110,15 +122,24 @@ public class Configuration : IPluginConfiguration
     public float HairIdleSpeed { get; set; } = 0.15f;   // m/s
     #endregion
 
-    #region Capture Presets
+    #region Deform Presets
+    public List<PresetRule> PresetRules { get; set; } = new();
+
     public List<BonePreset> Presets { get; set; } = new();
     public int ActivePreset { get; set; }
-
     #endregion
 
     #region Face Tracking
     public bool FaceTracking { get; set; }
     public List<FaceRule> FaceRules { get; set; } = new();
+    #endregion
+
+    #region BodyTurn
+    public bool TurnBodyStanding { get; set; } = false;
+    public bool TurnBodyWalking { get; set; } = false;
+    public float TurnStartDeg { get; set; } = 55f;
+    public float TurnSpeedDeg { get; set; } = 60f;   // max °/s
+    public float TurnCenterDeg { get; set; }   // Ruhe-Yaw des Kopfes (Abgleich)
     #endregion
 
     #region FPV Settings

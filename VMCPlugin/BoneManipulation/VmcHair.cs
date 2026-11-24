@@ -19,10 +19,13 @@ namespace VMCPlugin.BoneManipulation
 
         private Vector3 lastPos;
         private double lastPosT;
-        private bool idle = true;
+        private bool idle { get; set; } = true;
         private float hairW;
 
-
+        /// <summary>
+        /// Updates whether the character is considered idle based on movement speed between position samples, ignoring pauses or teleports.
+        /// </summary>
+        /// <param name="pos">The current world or character position.</param>
         private void UpdateIdle(Vector3 pos)
         {
             var now = GetNowSeconds();
@@ -35,6 +38,10 @@ namespace VMCPlugin.BoneManipulation
             idle = Vector3.Distance(pos, prev) / (float)dt < config.HairIdleSpeed;
         }
 
+        /// <summary>
+        /// Updates cached matching hair bones when the skeleton or prefix configuration changes and applies spring-damper secondary motion to those bones and their descendants.
+        /// </summary>
+        /// <param name="addr">Native pointer address of the target <see cref="Character"/>.</param>
         private void ApplyHair(nint addr)
         {
             var draw = ((Character*)addr)->GameObject.DrawObject;
@@ -64,7 +71,7 @@ namespace VMCPlugin.BoneManipulation
                             if (n.StartsWith(pf, StringComparison.OrdinalIgnoreCase)) { hairBones.Add((p, b)); break; }
                     }
                 }
-                log.Debug($"Haar-Bones: {hairBones.Count}");
+                //log.Debug($"Haar-Bones: {hairBones.Count}");
             }
 
             var now = GetNowSeconds();
