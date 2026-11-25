@@ -32,7 +32,11 @@ public sealed class RenderHook : IDisposable
     {
         if (!failed)
         {
-            try { vmc.Apply(); }
+            try
+            {
+                vmc.Apply();
+                vmc.ApplyRemoteFrames();
+            }
             catch (Exception ex)
             {
                 failed = true;

@@ -208,8 +208,16 @@ internal class ConfigUi : IDisposable
     private bool DrawGeneral()
     {
         bool ch = false;
-        ch |= Toggle("Enable Plugin", _config.Enabled, v => _config.Enabled = v);
-        _vmcRecv.Enabled = _config.Enabled;
+        if (Toggle("Enable VMC", _config.VMCEnabled, v => _config.VMCEnabled = v))
+        {
+            _vmcRecv.VMCEnabled = _config.VMCEnabled;
+            ch = true;
+        }
+        if (Toggle("Enable Remote", _config.RemoteEnabled, v => _config.RemoteEnabled = v))
+        {
+            _vmcRecv.RemoteEnabled = _config.RemoteEnabled;
+            ch = true;
+        }
 
         ch |= Toggle("First Person View", _config.FirstPersonLook, v=> _config.FirstPersonLook =v);
         return ch;

@@ -325,7 +325,7 @@ public class CamController : IDisposable
     /// </summary>
     private void ProcessThrottledFrameworkUpdate()
     {
-        if (!configuration.Enabled) return;
+        if (!configuration.VMCEnabled || !configuration.RemoteEnabled) return;
         if (!Api.ClientState.IsLoggedIn) return;
 
         if (!Api.Framework.IsInFrameworkUpdateThread)
@@ -352,7 +352,7 @@ public class CamController : IDisposable
     /// </summary>
     private unsafe bool ShouldDrawGameObjectDetour(CameraBase* thisPtr, GameObject* gameObject, Vector3* sceneCameraPos, Vector3* lookAtVector)
     {
-        if (!configuration.Enabled)
+        if (!configuration.VMCEnabled)
             goto Original;
 
         // Force draw all player and companion in first person with RealFirstPerson enabled
@@ -475,7 +475,7 @@ public class CamController : IDisposable
         // Keep a rolling cache of DirH for when we exit first person
         previousDirH = Cam->DirH;
 
-        if (!configuration.FirstPersonLook || !InFirstPerson || !configuration.Enabled)
+        if (!configuration.FirstPersonLook || !InFirstPerson || !configuration.VMCEnabled)
         {
             if (exitingFirstPerson || previousTickWasFirstPerson)
             {

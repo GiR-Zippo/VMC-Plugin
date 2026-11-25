@@ -131,21 +131,21 @@ public unsafe partial class VmcHeadReceiver : IDisposable
     private CancellationTokenSource? _cts;
     private Thread? _recvThread;
 
-    private bool _enabled;
+    private bool _vmcEnabled;
     private int _port = 39539;
 
     private double _lastPacketUtcSec;
     private bool _hasPacket;
     private bool _disposed;
 
-    public bool Enabled
+    public bool VMCEnabled
     {
-        get => _enabled;
+        get => _vmcEnabled;
         set
         {
-            if (_enabled == value) return;
-            _enabled = value;
-            if (_enabled) StartListener(_port);
+            if (_vmcEnabled == value) return;
+            _vmcEnabled = value;
+            if (_vmcEnabled) StartListener(_port);
             else StopListener();
         }
     }
@@ -158,11 +158,8 @@ public unsafe partial class VmcHeadReceiver : IDisposable
             var clamped = Math.Clamp(value, 1024, 65535);
             if (_port == clamped) return;
             _port = clamped;
-            if (_enabled)
-            {
-                StopListener();
+            if (_vmcEnabled)
                 StartListener(_port);
-            }
         }
     }
 
@@ -436,7 +433,7 @@ public unsafe partial class VmcHeadReceiver : IDisposable
     /// </summary>
     public void Apply()
     {
-        if (!_enabled) return;
+        if (!_vmcEnabled) return;
 
         ReadState();
         ResolvePreset();
@@ -469,7 +466,8 @@ public unsafe partial class VmcHeadReceiver : IDisposable
 
         if (CamController.InFirstPerson)
             ApplyBodyTurn(lp.Address);
-
+        SendFinalBones = true;
+        EnqueueFinalXivBones(lp.Address, lp.Position);
         if (!isFresh) return;
     }
 
@@ -924,5 +922,6 @@ public unsafe partial class VmcHeadReceiver : IDisposable
         if (_disposed) return;
         _disposed = true;
         StopListener();
+        StopRemote();
     }
 }

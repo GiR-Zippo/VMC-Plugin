@@ -54,7 +54,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         vmcHead = new VmcHeadReceiver(objects, log, config, Cam);
         renderHook = new RenderHook(sigScanner, interop, vmcHead, log);
         configUi = new ConfigUi(config, showConfig, pi, vmcHead);
-
+        vmcHead.ConfigureServerTarget("127.0.0.1", 40000);
         framework.Update += OnUpdate;
 
         pi.UiBuilder.Draw += OnDraw;
@@ -63,22 +63,25 @@ public sealed unsafe class Plugin : IDalamudPlugin
         commands.AddHandler(CommandName, new CommandInfo((_, args) =>
         {
             var a = args.Trim().ToLowerInvariant();
-            if (a == "on") vmcHead.Enabled = true;
-            else if (a == "off") vmcHead.Enabled = false;
-            else vmcHead.Enabled = !vmcHead.Enabled;
-            log.Information($"VMC Head Receiver: {(vmcHead.Enabled ? "AN" : "AUS")} (Port {vmcHead.Port})");
+            if (a == "on") vmcHead.VMCEnabled = true;
+            else if (a == "off") vmcHead.VMCEnabled = false;
+            else vmcHead.VMCEnabled = !vmcHead.VMCEnabled;
+            log.Information($"VMC Head Receiver: {(vmcHead.VMCEnabled ? "AN" : "AUS")} (Port {vmcHead.Port})");
         })
         {
             HelpMessage = "VMC-Kopftracking ein-/ausschalten. Optionen: on, off"
         });
 
-        if (config.Enabled)
-            vmcHead.Enabled = config.Enabled;
+        if (config.VMCEnabled)
+            vmcHead.VMCEnabled = config.VMCEnabled;
+        if (config.RemoteEnabled)
+            vmcHead.RemoteEnabled = config.RemoteEnabled;
     }
 
     private void OnUpdate(IFramework _)
     {
         vmcHead.UpdateEmotes();
+        vmcHead.UpdateLocalPresence();
         while (vmcHead.Commands.TryDequeue(out var cmd)) SendChat(cmd);
     }
 

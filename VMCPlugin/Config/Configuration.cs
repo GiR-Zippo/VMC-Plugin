@@ -102,8 +102,14 @@ public class Configuration : IPluginConfiguration
     public bool SelfInitialized { get; set; }
 
     #region General
-    public bool Enabled { get; set; } = true;
+    public bool VMCEnabled { get; set; } = true;
+    public bool RemoteEnabled { get; set; } = true;
     public bool FirstPersonLook { get; set; }
+    #endregion
+
+    #region Remote Settings
+    public string RemoteIp { get; set; } = "127.0.0.1";
+    public int RemotePort { get; set; } = 40000;
     #endregion
 
     #region VRM Settings
