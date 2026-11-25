@@ -3,7 +3,7 @@
         "Author": "GiR-Zippo",
         "Name": "VMCPlugin",
         "InternalName": "VMCPlugin",
-        "AssemblyVersion": "0.0.3.5",
+        "AssemblyVersion": "0.0.3.6",
         "Description": "A plugin receiving VMC data and use it on your character.",
         "ApplicableVersion": "any",
         "RepoUrl": "https://github.com//GiR-Zippo/VMC-Plugin",
@@ -16,9 +16,9 @@
         "Punchline": "A test plogon for VMC data.",
         "IsHide": "False",
         "IsTestingExclusive": "False",
-        "LastUpdate": "1795458378",
-        "DownloadLinkInstall": "https://github.com//GiR-Zippo/VMC-Plugin/releases/download/0.0.3.5/latest.zip",
-        "DownloadLinkTesting": "https://github.com//GiR-Zippo/VMC-Plugin/releases/download/0.0.3.5/latest.zip",
-        "DownloadLinkUpdate": "https://github.com//GiR-Zippo/VMC-Plugin/releases/download/0.0.3.5/latest.zip"
+        "LastUpdate": "1795584538",
+        "DownloadLinkInstall": "https://github.com//GiR-Zippo/VMC-Plugin/releases/download/0.0.3.6/latest.zip",
+        "DownloadLinkTesting": "https://github.com//GiR-Zippo/VMC-Plugin/releases/download/0.0.3.6/latest.zip",
+        "DownloadLinkUpdate": "https://github.com//GiR-Zippo/VMC-Plugin/releases/download/0.0.3.6/latest.zip"
     }
 ]
