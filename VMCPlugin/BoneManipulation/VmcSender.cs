@@ -9,6 +9,7 @@ using System.IO;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using VMCPlugin.Offsets;
 
 namespace VMCPlugin.BoneManipulation
@@ -27,17 +28,18 @@ namespace VMCPlugin.BoneManipulation
         private readonly record struct OutgoingBoneSample(string Name, Quaternion Rot, Vector3 Pos);
 
         private readonly ConcurrentDictionary<ulong, RemoteBoneFrame> _latestRemoteFrames = new();
-        private readonly ConcurrentQueue<byte[]> _sendQueue = new();
+        private readonly BlockingCollection<byte[]> _sendQueue = new(boundedCapacity: 32);
 
-        private const double _remoteFrameTimeoutSec = 0.5;
-        private ulong _latestClientId;
-        private uint _latestZoneId;
-        private float _latestX;
-        private float _latestY;
-        private float _latestZ;
+        private sealed record LatestPositionState(
+            ulong ClientId,
+            uint MapId,
+            uint CurrentWorld,
+            Vector3 Position);
+
+        private LatestPositionState? _latestPosition;
         private volatile bool _hasLatestPoseState;
-
         private double _lastHeartbeatSentSec;
+
 
         // --- TCP Client ---
         private TcpClient? _tcpClient;
@@ -45,15 +47,14 @@ namespace VMCPlugin.BoneManipulation
         private CancellationTokenSource? _tcpCts;
         private Thread? _tcpSendThread;
         private Thread? _tcpRecvThread;
-
         private string _tcpHost = "127.0.0.1";
         private int _tcpPort = 40000;
         private volatile bool _tcpRunning;
+        private readonly object _connLock = new();
+        private int _reconnectDelayMs = 500;
 
         // --- Options ---
         public bool SendFinalBones { get; set; }
-        public float RemoteApplyMaxDistance { get; set; } = 25f;
-        public double HeartbeatIntervalSec { get; set; } = 0.25;
 
         private bool _remoteEnabled;
         public bool RemoteEnabled
@@ -75,6 +76,7 @@ namespace VMCPlugin.BoneManipulation
             StopRemote();
             if (_disposed) return;
 
+            _reconnectDelayMs = 500;
             _tcpHost = host;
             _tcpPort = Math.Clamp(port, 1024, 65535);
             _tcpRunning = true;
@@ -98,19 +100,26 @@ namespace VMCPlugin.BoneManipulation
 
         public void StopRemote()
         {
+            var cts = _tcpCts;
+            var sendT = _tcpSendThread;
+            var recvT = _tcpRecvThread;
+
             _tcpRunning = false;
-            try { _tcpCts?.Cancel(); } catch { }
+            try { cts?.Cancel(); } catch { }
             try { _tcpStream?.Close(); _tcpStream?.Dispose(); } catch { }
             try { _tcpClient?.Close(); _tcpClient?.Dispose(); } catch { }
 
+            sendT?.Join(500);
+            recvT?.Join(500);
+
             _tcpStream = null;
             _tcpClient = null;
-            _tcpCts?.Dispose();
+            cts?.Dispose();
             _tcpCts = null;
             _tcpSendThread = null;
             _tcpRecvThread = null;
 
-            while (_sendQueue.TryDequeue(out _)) { }
+            while (_sendQueue.TryTake(out _)) { }
         }
 
         private void EnsureConnected(CancellationToken token)
@@ -120,75 +129,105 @@ namespace VMCPlugin.BoneManipulation
                 if (_tcpClient is { Connected: true } && _tcpStream != null)
                     return;
 
+                var client = new TcpClient { NoDelay = true };
+                Task? connectTask = null;
                 try
                 {
-                    var client = new TcpClient { NoDelay = true };
-                    client.Connect(_tcpHost, _tcpPort);
-                    _tcpClient = client;
-                    _tcpStream = client.GetStream();
+                    connectTask = client.ConnectAsync(_tcpHost, _tcpPort);
+                    if (!connectTask.Wait(2000, token))
+                        throw new TimeoutException();
+
+                    // try-Block, nach erfolgreichem Wait:
+                    client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+                    client.Client.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 10);
+                    client.Client.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 5);
+                    client.Client.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 3);
+
+                    lock (_connLock)
+                    {
+                        _tcpClient = client;
+                        _tcpStream = client.GetStream();
+                    }
+                    while (_sendQueue.TryTake(out _)) { }   // alte Frames nach Reconnect verwerfen
+                    _reconnectDelayMs = 500;
                     _log.Debug($"Verbunden mit TCP-Server {_tcpHost}:{_tcpPort}");
+                    return;
+                }
+                catch (Exception ex) when (ex is ObjectDisposedException or OperationCanceledException)
+                {
+                    Observe(connectTask);
+                    try { client.Dispose(); } catch { }
                     return;
                 }
                 catch
                 {
-                    try { _tcpClient?.Close(); _tcpClient?.Dispose(); } catch { }
-                    _tcpClient = null;
-                    _tcpStream = null;
-                    Thread.Sleep(500);
+                    Observe(connectTask);
+                    try { client.Dispose(); } catch { }
+                    Disconnect();
+                    _log.Debug($"Verbindung fehlgeschlagen, neuer Versuch in {_reconnectDelayMs} ms.");
+                    WaitBackoff();
                 }
             }
         }
 
+        private static void Observe(Task? t)
+        {
+            t?.ContinueWith(static x => _ = x.Exception, TaskContinuationOptions.OnlyOnFaulted);
+        }
+
+        private void Disconnect()
+        {
+            lock (_connLock)
+            {
+                try { _tcpStream?.Close(); } catch { }
+                try { _tcpClient?.Close(); } catch { }
+                _tcpStream = null;
+                _tcpClient = null;
+            }
+        }
+
+        private void WaitBackoff()
+        {
+            var end = Environment.TickCount64 + _reconnectDelayMs;
+            while (_tcpRunning && Environment.TickCount64 < end)
+                Thread.Sleep(50);
+            _reconnectDelayMs = Math.Min(_reconnectDelayMs * 2, 5000);
+        }
+
         private void TcpSendLoop(CancellationToken token)
         {
-            var lenPrefix = new byte[4];
-
             while (!token.IsCancellationRequested && _tcpRunning)
             {
                 EnsureConnected(token);
                 var stream = _tcpStream;
                 if (stream == null) continue;
 
-                if (_sendQueue.TryDequeue(out var packet))
+                try
                 {
-                    try
+                    if (!_sendQueue.TryTake(out var packet, 100, token))
                     {
-                        BinaryPrimitives.WriteUInt32LittleEndian(lenPrefix, (uint)packet.Length);
-                        stream.Write(lenPrefix, 0, 4);
-                        stream.Write(packet, 0, packet.Length);
-                    }
-                    catch (Exception ex)
-                    {
-                        _log.Warning(ex, "VMC: TCP-Senden fehlgeschlagen, verbinde neu.");
-                        try { stream.Close(); _tcpClient?.Close(); } catch { }
-                        _tcpStream = null;
-                        _tcpClient = null;
-                    }
-                    continue;
-                }
+                        var now = GetNowSeconds();
+                        if (!_hasLatestPoseState || now - _lastHeartbeatSentSec < _config.HeartbeatIntervalSec)
+                            continue;
 
-                var now = GetNowSeconds();
-                if (_hasLatestPoseState && (now - _lastHeartbeatSentSec) >= HeartbeatIntervalSec)
+                        _lastHeartbeatSentSec = now;
+                        packet = BuildHeartbeatPacket();
+                    }
+
+                    stream.Write(packet, 0, packet.Length);
+                }
+                catch (OperationCanceledException)
                 {
-                    _lastHeartbeatSentSec = now;
-                    try
-                    {
-                        var hb = BuildHeartbeatPacket();
-                        BinaryPrimitives.WriteUInt32LittleEndian(lenPrefix, (uint)hb.Length);
-                        stream.Write(lenPrefix, 0, 4);
-                        stream.Write(hb, 0, hb.Length);
-                    }
-                    catch (Exception ex)
-                    {
-                        _log.Warning(ex, "VMC: Heartbeat-Senden fehlgeschlagen, verbinde neu.");
-                        try { stream.Close(); _tcpClient?.Close(); } catch { }
-                        _tcpStream = null;
-                        _tcpClient = null;
-                    }
-                    continue;
+                    break;
                 }
+                catch (Exception ex)
+                {
+                    if (token.IsCancellationRequested || !_tcpRunning)
+                        break;
 
-                Thread.Sleep(2);
+                    _log.Warning(ex, "VMC: TCP-Senden fehlgeschlagen, verbinde neu.");
+                    Disconnect();
+                }
             }
         }
 
@@ -228,9 +267,7 @@ namespace VMCPlugin.BoneManipulation
                 {
                     if (!token.IsCancellationRequested)
                         _log.Warning(ex, "VMC: TCP-Empfang unterbrochen.");
-                    try { stream.Close(); _tcpClient?.Close(); } catch { }
-                    _tcpStream = null;
-                    _tcpClient = null;
+                    Disconnect();
                     Thread.Sleep(250);
                 }
             }
@@ -238,31 +275,40 @@ namespace VMCPlugin.BoneManipulation
 
         public void UpdateLocalPresence()
         {
-            Volatile.Write(ref _latestClientId, Api.PlayerState.ContentId);
-            Volatile.Write(ref _latestZoneId, Api.ClientState.TerritoryType);
-            Volatile.Write(ref _latestX, Api.GetLocalPlayer().Position.X);
-            Volatile.Write(ref _latestY, Api.GetLocalPlayer().Position.Y);
-            Volatile.Write(ref _latestZ, Api.GetLocalPlayer().Position.Z);
+            if (Api.GetLocalPlayer() == null)
+                return;
+
+            var lp = Api.GetLocalPlayer();
+            var pos = lp?.Position ?? Vector3.Zero;
+
+            var snapshot = new LatestPositionState(
+                Api.PlayerState.ContentId,
+                Api.ClientState.MapId,
+                Api.GetLocalPlayer().CurrentWorld.RowId,
+                pos);
+
+            Volatile.Write(ref _latestPosition, snapshot);
             _hasLatestPoseState = true;
         }
 
         private byte[] BuildHeartbeatPacket()
         {
-            var clientId = Api.PlayerState.ContentId;
-            var zoneId = Volatile.Read(ref _latestZoneId);
-            var x = Volatile.Read(ref _latestX);
-            var y = Volatile.Read(ref _latestY);
-            var z = Volatile.Read(ref _latestZ);
+            var snap = Volatile.Read(ref _latestPosition);
+            var clientId = snap?.ClientId ?? Api.PlayerState.ContentId;
+            var mapId = snap?.MapId ?? Api.ClientState.MapId;
+            var currentWorld = snap?.CurrentWorld ?? Api.GetLocalPlayer().CurrentWorld.RowId;
+            var pos = snap?.Position ?? Vector3.Zero;
 
             var payload = new byte[12];
             var pSpan = payload.AsSpan();
-            BinaryPrimitives.WriteSingleLittleEndian(pSpan[0..4], x);
-            BinaryPrimitives.WriteSingleLittleEndian(pSpan[4..8], y);
-            BinaryPrimitives.WriteSingleLittleEndian(pSpan[8..12], z);
+            BinaryPrimitives.WriteSingleLittleEndian(pSpan[0..4], pos.X);
+            BinaryPrimitives.WriteSingleLittleEndian(pSpan[4..8], pos.Y);
+            BinaryPrimitives.WriteSingleLittleEndian(pSpan[8..12], pos.Z);
 
-            return WireHeader.WrapPayload(
+            return WireHeader.WrapPayloadFramed(
                 clientId,
-                zoneId,
+                mapId,
+                currentWorld,
                 WirePacketType.Heartbeat,
                 payload,
                 WirePacketFlags.HasWorldPos);
@@ -270,7 +316,7 @@ namespace VMCPlugin.BoneManipulation
 
         public void EnqueueFinalXivBones(nint charAddress, Vector3 worldPos)
         {
-            if (!SendFinalBones || !_tcpRunning || _sendQueue.Count > 32)
+            if (!SendFinalBones || !_tcpRunning)
                 return;
 
             var chara = (Character*)charAddress;
@@ -281,13 +327,10 @@ namespace VMCPlugin.BoneManipulation
             if (skel == null)
                 return;
 
-            var hairPrefixes = (_config.HairPrefix ?? string.Empty)
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-            var targetXivNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            /*var targetXivNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var node in _retargetNodes)
                 targetXivNames.Add(node.Xiv);
-
+*/
             var samples = new List<OutgoingBoneSample>(64);
             var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -367,15 +410,15 @@ namespace VMCPlugin.BoneManipulation
                 offset += 12;
             }
 
-            var clientId = Api.PlayerState.ContentId;
-            var packet = WireHeader.WrapPayload(
-                clientId,
-                Api.ClientState.TerritoryType,
+            var packet = WireHeader.WrapPayloadFramed(
+                Api.PlayerState.ContentId,
+                Api.ClientState.MapId,
+                chara->CurrentWorld,
                 WirePacketType.FinalBones,
                 payload,
                 WirePacketFlags.HasWorldPos);
 
-            _sendQueue.Enqueue(packet);
+            _sendQueue.TryAdd(packet);
         }
 
         private static bool MatchesAnyPrefix(string name, string[] prefixes)
@@ -416,6 +459,7 @@ namespace VMCPlugin.BoneManipulation
             switch (hdr.PacketType)
             {
                 case WirePacketType.Heartbeat:
+
                     return;
 
                 case WirePacketType.FinalBones:
@@ -438,7 +482,7 @@ namespace VMCPlugin.BoneManipulation
             {
                 ClientId = hdr.ClientId,
                 WorldPos = new Vector3(x, y, z),
-                ReceivedAtSec = GetNowSeconds()
+                ReceivedAtSec = GetNowSeconds(),
             };
 
             var pos = 14;
@@ -478,36 +522,40 @@ namespace VMCPlugin.BoneManipulation
             if (lp == null)
                 return;
 
-            var maxDistSq = RemoteApplyMaxDistance * RemoteApplyMaxDistance;
+            var maxDist = _config.RemoteApplyMaxDistance;
+            var maxDistSq = maxDist * maxDist;
+            var now = GetNowSeconds();
 
-            foreach (var kv in _latestRemoteFrames)
+            foreach (var obj in _objects)
             {
-                var frame = kv.Value;
+                if (obj.EntityId == lp.EntityId)
+                    continue;
+                if (obj.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc)
+                    continue;
+
+                var chara = (Character*)obj.Address;
+                if (chara == null || !HasVisibleDrawObject(chara))
+                    continue;
+
+                if (!_latestRemoteFrames.TryGetValue(chara->ContentId, out var frame))
+                    continue;
+
+                if (now - frame.ReceivedAtSec > 2.0)
+                {
+                    _latestRemoteFrames.TryRemove(frame.ClientId, out _);
+                    continue;
+                }
+
                 if (frame.Bones.Count == 0)
                     continue;
 
-                foreach (var obj in _objects)
-                {
-                    if (obj.EntityId == lp.EntityId)
-                        continue;
-                    if (obj.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc)
-                        continue;
+                var dx = frame.WorldPos.X - obj.Position.X;
+                var dy = frame.WorldPos.Y - obj.Position.Y;
+                var dz = frame.WorldPos.Z - obj.Position.Z;
+                if ((dx * dx + dy * dy + dz * dz) > maxDistSq)
+                    continue;
 
-                    var chara = (Character*)obj.Address;
-                    if (chara == null || !HasVisibleDrawObject(chara))
-                        continue;
-                    if (frame.ClientId != 0 && chara->ContentId != frame.ClientId)
-                        continue;
-
-                    var dx = frame.WorldPos.X - obj.Position.X;
-                    var dy = frame.WorldPos.Y - obj.Position.Y;
-                    var dz = frame.WorldPos.Z - obj.Position.Z;
-                    if ((dx * dx + dy * dy + dz * dz) > maxDistSq)
-                        continue;
-
-                    ApplyTransformsToCharacter(chara, frame);
-                    break;
-                }
+                ApplyTransformsToCharacter(chara, frame);
             }
         }
 
@@ -597,7 +645,7 @@ namespace VMCPlugin.BoneManipulation
 
         public readonly struct WireHeader
         {
-            public const int Size = 28;
+            public const int Size = 32;
             public const uint MagicValue = 0x58495642; // "XIVB"
             public const ushort CurrentVersion = 1;
 
@@ -605,13 +653,15 @@ namespace VMCPlugin.BoneManipulation
             public ushort Version { get; init; }
             public WirePacketFlags Flags { get; init; }
             public ulong ClientId { get; init; }
-            public uint ZoneId { get; init; }
+            public uint Map { get; init; }
+            public uint CurrentWorld { get; init; }
             public WirePacketType PacketType { get; init; }
             public uint PayloadLength { get; init; }
 
             public static WireHeader Create(
                 ulong clientId,
-                uint zoneId,
+                uint map,
+                uint currentWorld,
                 WirePacketType packetType,
                 uint payloadLength,
                 WirePacketFlags flags = WirePacketFlags.None) => new()
@@ -620,7 +670,8 @@ namespace VMCPlugin.BoneManipulation
                     Version = CurrentVersion,
                     Flags = flags,
                     ClientId = clientId,
-                    ZoneId = zoneId,
+                    Map = map,
+                    CurrentWorld = currentWorld,
                     PacketType = packetType,
                     PayloadLength = payloadLength
                 };
@@ -634,9 +685,10 @@ namespace VMCPlugin.BoneManipulation
                 BinaryPrimitives.WriteUInt16LittleEndian(dst[4..6], Version);
                 BinaryPrimitives.WriteUInt16LittleEndian(dst[6..8], (ushort)Flags);
                 BinaryPrimitives.WriteUInt64LittleEndian(dst[8..16], ClientId);
-                BinaryPrimitives.WriteUInt32LittleEndian(dst[16..20], ZoneId);
-                BinaryPrimitives.WriteUInt32LittleEndian(dst[20..24], (uint)PacketType);
-                BinaryPrimitives.WriteUInt32LittleEndian(dst[24..28], PayloadLength);
+                BinaryPrimitives.WriteUInt32LittleEndian(dst[16..20], Map);
+                BinaryPrimitives.WriteUInt32LittleEndian(dst[20..24], CurrentWorld);
+                BinaryPrimitives.WriteUInt32LittleEndian(dst[24..28], (uint)PacketType);
+                BinaryPrimitives.WriteUInt32LittleEndian(dst[28..32], PayloadLength);
             }
 
             public static bool TryReadFrom(ReadOnlySpan<byte> src, out WireHeader header)
@@ -656,27 +708,42 @@ namespace VMCPlugin.BoneManipulation
                     Version = version,
                     Flags = (WirePacketFlags)BinaryPrimitives.ReadUInt16LittleEndian(src[6..8]),
                     ClientId = BinaryPrimitives.ReadUInt64LittleEndian(src[8..16]),
-                    ZoneId = BinaryPrimitives.ReadUInt32LittleEndian(src[16..20]),
-                    PacketType = (WirePacketType)BinaryPrimitives.ReadUInt32LittleEndian(src[20..24]),
-                    PayloadLength = BinaryPrimitives.ReadUInt32LittleEndian(src[24..28])
+                    Map = BinaryPrimitives.ReadUInt32LittleEndian(src[16..20]),
+                    CurrentWorld = BinaryPrimitives.ReadUInt32LittleEndian(src[20..24]),
+                    PacketType = (WirePacketType)BinaryPrimitives.ReadUInt32LittleEndian(src[24..28]),
+                    PayloadLength = BinaryPrimitives.ReadUInt32LittleEndian(src[28..32])
                 };
                 return true;
             }
 
             public static byte[] WrapPayload(
                 ulong clientId,
-                uint zoneId,
+                uint map,
+                uint currentWorld,
                 WirePacketType packetType,
                 ReadOnlySpan<byte> payload,
                 WirePacketFlags flags = WirePacketFlags.None)
             {
                 var packet = new byte[Size + payload.Length];
-                var hdr = Create(clientId, zoneId, packetType, (uint)payload.Length, flags);
+                var hdr = Create(clientId, map, currentWorld, packetType, (uint)payload.Length, flags);
                 hdr.WriteTo(packet.AsSpan(0, Size));
                 payload.CopyTo(packet.AsSpan(Size));
                 return packet;
             }
-        }
 
+            public static byte[] WrapPayloadFramed(
+                ulong clientId, uint map, uint currentWorld,
+                WirePacketType packetType, ReadOnlySpan<byte> payload,
+                WirePacketFlags flags = WirePacketFlags.None)
+            {
+                var total = Size + payload.Length;
+                var packet = new byte[4 + total];
+                BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(0, 4), (uint)total);
+                Create(clientId, map, currentWorld, packetType, (uint)payload.Length, flags)
+                    .WriteTo(packet.AsSpan(4, Size));
+                payload.CopyTo(packet.AsSpan(4 + Size));
+                return packet;
+            }
+        }
     }
 }

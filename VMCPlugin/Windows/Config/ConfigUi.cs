@@ -17,7 +17,8 @@ internal class ConfigUi : IDisposable
     private readonly IDalamudPluginInterface _pi;
     private VmcHeadReceiver _vmcRecv;
 
-    private int _selectedTab = 0;
+    private string _selectedTab = "General";
+    private readonly Dictionary<string, Func<bool>> _tabDrawers;
 
     private List<(uint Id, string Name)>? _emotes;
     private string _emoteFilter = "";
@@ -103,18 +104,6 @@ internal class ConfigUi : IDisposable
         return true;
     }
 
-    private static readonly string[] _Tabs =
-    {
-        "General",
-        "Preset Rules",
-        "Presets",
-        "VRM",
-        "Hair",
-        "Emotes",
-        "Face Tracking",
-        "FPView",
-        "Debug"
-    };
 
     public bool IsOpen
     {
@@ -128,11 +117,24 @@ internal class ConfigUi : IDisposable
         _showConfig = showConfig;
         _pi = pi;
         _vmcRecv = vmcRecv;
+
+        _tabDrawers = new Dictionary<string, Func<bool>>
+        {
+            ["General"] = DrawGeneral,
+            ["Preset Rules"] = DrawPresetRules,
+            ["Presets"] = DrawPresets,
+            ["VRM"] = DrawVmcChains,
+            ["Remote"] = DrawRemoteSettings,
+            ["Hair"] = DrawHair,
+            ["Emotes"] = DrawEmotes,
+            ["Face Tracking"] = DrawFace,
+            ["FPView"] = DrawFPV,
+            ["Debug"] = DrawDebug,
+        };
     }
 
     public void OnDraw()
     {
-
         ImGui.SetNextWindowSize(new Vector2(720f, 480f), ImGuiCond.FirstUseEver);
         if (!ImGui.Begin("VMC Config", ref _showConfig))
         {
@@ -141,14 +143,15 @@ internal class ConfigUi : IDisposable
         }
 
         var changed = false;
-        var rebuild = false;
 
         // Linkes Side-Tab-Panel
         if (ImGui.BeginChild("##SideTabs", new Vector2(165f, 0f), true))
         {
-            for (var i = 0; i < _Tabs.Length; i++)
-                if (ImGui.Selectable(_Tabs[i], _selectedTab == i, ImGuiSelectableFlags.None, new Vector2(0f, 26f)))
-                    _selectedTab = i;
+            foreach (var name in _tabDrawers.Keys)
+            {
+                if (ImGui.Selectable(name, _selectedTab == name, ImGuiSelectableFlags.None, new Vector2(0f, 26f)))
+                    _selectedTab = name;
+            }
         }
         ImGui.EndChild();
 
@@ -157,47 +160,16 @@ internal class ConfigUi : IDisposable
         // Rechter Inhaltsbereich
         if (ImGui.BeginChild("##TabContent", new Vector2(0f, 0f), true))
         {
-            ImGui.TextUnformatted(_Tabs[_selectedTab]);
-            ImGui.Separator();
-            ImGui.Spacing();
-
-            switch (_selectedTab)
+            if (_tabDrawers.TryGetValue(_selectedTab, out var draw))
             {
-                case 0:
-                    changed = DrawGeneral();
-                    break;
-                case 1:
-                    changed = DrawPresetRules();
-                    break;
-                case 2:
-                    changed = DrawPresets();
-                    break;
-                case 3:
-                    changed = DrawVmcChains();
-                    break;
-                case 4:
-                    changed = DrawHair();
-                    break;
-                case 5:
-                    changed = DrawEmotes();
-                    break;
-                case 6:
-                    changed = DrawFace();
-                    break;
-                case 7:
-                    changed = DrawFPV();
-                    break;
-                case 8: // Debug
-                    changed = DrawDebug();
-                    break;
+                ImGui.TextUnformatted(_selectedTab);
+                ImGui.Separator();
+                ImGui.Spacing();
+
+                changed = draw();
             }
         }
         ImGui.EndChild();
-
-        if (rebuild)
-        {
-            changed = true;
-        }
 
         ImGui.End();
 
@@ -219,7 +191,7 @@ internal class ConfigUi : IDisposable
             ch = true;
         }
 
-        ch |= Toggle("First Person View", _config.FirstPersonLook, v=> _config.FirstPersonLook =v);
+        ch |= Toggle("Enable First Person View", _config.FirstPersonLook, v=> _config.FirstPersonLook =v);
         return ch;
     }
 
@@ -408,17 +380,46 @@ internal class ConfigUi : IDisposable
         return ch;
     }
 
+    private bool DrawRemoteSettings()
+    {
+        bool ch = false;
+        var host = _config.RemoteIp ?? "127.0.0.1";
+        ImGui.SetNextItemWidth(220f);
+        if (ImGui.InputText("Host / Adresse", ref host, 128))
+        {
+            _config.RemoteIp = host.Trim();
+            ch = true;
+        }
+
+        var port = _config.RemotePort;
+        if (port <= 0) port = 40000;
+        ImGui.SetNextItemWidth(120f);
+        if (ImGui.InputInt("Port", ref port))
+        {
+            _config.RemotePort = Math.Clamp(port, 1, 65535);
+            ch = true;
+        }
+        if (ImGui.Button("Reconnect") && _config.RemoteEnabled)
+        {
+            _vmcRecv.RemoteEnabled = false;
+            _vmcRecv.RemoteEnabled = true;
+        }
+        ch |= SliderF("Distance", _config.RemoteApplyMaxDistance, 10f, 100f, v => _config.RemoteApplyMaxDistance = v, "%.0f");
+
+        return ch;
+    }
+
     private bool DrawHair()
     { 
         bool ch = false;
         var hp = _config.HairPrefix;
         ImGui.SetNextItemWidth(220f);
+        ch |= Toggle("Hair-Springy", _config.HairSpring, v => _config.HairSpring = v);
         if (ImGui.InputText("Haar-Bone-Prefixes", ref hp, 128))
         {
             _config.HairPrefix = hp;
             ch = true;
         }
-        ch |= Toggle("Hair-Springy", _config.HairSpring, v => _config.HairSpring = v);
         ch |= SliderF("Stiffnes", _config.HairStiff, 10f, 200f, v => _config.HairStiff = v, "%.0f");
         ch |= SliderF("Dampen", _config.HairDamp, 1f, 30f, v => _config.HairDamp = v, "%.1f");
         ch |= SliderF("Strongnes", _config.HairStrength, 0f, 1f, v => _config.HairStrength = v);
