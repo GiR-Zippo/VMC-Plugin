@@ -24,6 +24,13 @@ public class CamController : IDisposable
         private bool init;
         private long last;
 
+        /// <summary>
+        /// Advances the One Euro filter with a new sample and adapts smoothing based on signal velocity.
+        /// </summary>
+        /// <param name="v">The new unfiltered input value.</param>
+        /// <param name="minCut">Minimum cutoff frequency in Hz for steady/slow movement.</param>
+        /// <param name="beta">Speed coefficient controlling how much cutoff increases during fast movement.</param>
+        /// <returns>The filtered output value.</returns>
         public float Step(float v, float minCut, float beta)
         {
             var now = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -40,15 +47,23 @@ public class CamController : IDisposable
             return x;
         }
 
+        /// <summary>
+        /// Resets the filter state so the next sample initializes it cleanly.
+        /// </summary>
         public void Reset() => init = false;
 
+        /// <summary>
+        /// Computes the exponential smoothing factor alpha from a cutoff frequency and time step.
+        /// </summary>
+        /// <param name="cutoff">Cutoff frequency in Hz.</param>
+        /// <param name="dt">Elapsed time in seconds.</param>
+        /// <returns>The smoothing factor in the range [0, 1].</returns>
         private static float Alpha(float cutoff, float dt)
         {
             var tau = 1f / (2f * MathF.PI * MathF.Max(cutoff, 1e-3f));
             return 1f / (1f + tau / dt);
         }
     }
-
     private readonly OneEuro pitchFilter = new();
     private readonly OneEuro yawFilter = new();
     private float baseH, baseV, relYaw0, pitch0;
@@ -56,12 +71,23 @@ public class CamController : IDisposable
     private System.Numerics.Quaternion vmcRot;
     private System.Numerics.Vector3 vmcPos;
     private long vmcTicks;
- 
+
+    /// <summary>
+    /// Stores the latest head rotation and position received from VMC along with a timestamp.
+    /// </summary>
+    /// <param name="r">Head rotation quaternion.</param>
+    /// <param name="p">Head position vector.</param>
     public void SetVmcHead(System.Numerics.Quaternion r, System.Numerics.Vector3 p)
     {
         lock (vmcLock) { vmcRot = r; vmcPos = p; vmcTicks = Environment.TickCount64; }
     }
 
+    /// <summary>
+    /// Retrieves the latest VMC head rotation and position if they were updated within the freshness window.
+    /// </summary>
+    /// <param name="r">When returning <see langword="true"/>, outputs the head rotation quaternion.</param>
+    /// <param name="p">When returning <see langword="true"/>, outputs the head position vector.</param>
+    /// <returns><see langword="true"/> if recent VMC head data is available; otherwise, <see langword="false"/>.</returns>
     private bool TryGetVmcHead(out System.Numerics.Quaternion r, out System.Numerics.Vector3 p)
     {
         lock (vmcLock) { r = vmcRot; p = vmcPos; return Environment.TickCount64 - vmcTicks < 250; }   // sonst Animation
@@ -97,11 +123,20 @@ public class CamController : IDisposable
 
     private const int HeadSkeletonIndex = 1;
 
-    private volatile float poseBlend;
+    /// <summary>
+    /// Sets the pose blend weight used when blending first-person camera yaw with pose orientation.
+    /// </summary>
+    /// <param name="w">Blend weight value.</param>
     public void SetPoseBlend(float w) => poseBlend = w;
+    private volatile float poseBlend;
 
-    private bool poseBlendEnabled { get; set; } = false;
+    /// <summary>
+    /// Sets whether pose blending is active for first-person camera orientation.
+    /// </summary>
+    /// <param name="state"><see langword="true"/> to enable pose blending; otherwise, <see langword="false"/>.</param>
+    /// <returns>The updated pose blend state.</returns>
     public bool SetPoseBlendState(bool state) => poseBlendEnabled = state;
+    private bool poseBlendEnabled { get; set; } = false;
 
     // 0.1f and 0.12f are empirical adjustments to better match eye position, based on female miqo'te
     private FFXIVClientStructs.FFXIV.Common.Math.Vector3 FirstPersonOffset => new(configuration.FirstPersonHeadOffsetSideward, configuration.FirstPersonHeadOffsetUpward + 0.1f, configuration.FirstPersonHeadOffsetForward + 0.12f);
@@ -109,12 +144,18 @@ public class CamController : IDisposable
     #endregion
 
     #region Dynamic Accessors
+    /// <summary>
+    /// Gets or sets the current third-person camera distance.
+    /// </summary>
     public static unsafe float CurrentDistance
     {
         get { return Cam->Distance; }
         set { Cam->Distance = value; }
     }
 
+    /// <summary>
+    /// Gets or sets the camera roll (tilt) angle in radians.
+    /// </summary>
     public static unsafe float CameraRoll
     {
         get { return ((ExpandedCamera*)Cam)->Tilt; }
@@ -186,17 +227,20 @@ public class CamController : IDisposable
     private Hook<GetCameraPositionDelegate>? getCameraPositionHook;
     private Hook<CameraBase.Delegates.ShouldDrawGameObject>? shouldDrawGameObjectHook;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="CamController"/> class and sets up camera hooks and framework updates.
+    /// </summary>
+    /// <param name="configuration">The active plugin configuration.</param>
     public CamController(Configuration configuration)
     {
         this.configuration = configuration;
-
-        //configuration.OnConfigurationChanged += OnConfigurationChanged;
-
         InitializeHooks();
-
         Api.Framework.Update += FrameworkOnUpdateEvent;
     }
 
+    /// <summary>
+    /// Installs and enables native camera hooks for camera position override and object visibility culling.
+    /// </summary>
     private unsafe void InitializeHooks()
     {
         var camVTable = Marshal.ReadIntPtr((nint)Cam);
@@ -218,6 +262,10 @@ public class CamController : IDisposable
         Api.PluginLog.Debug($"Current camera limits: Min={Cam->DirVMin}, Max={Cam->DirVMax}, FoV={Cam->FoV}");
     }
 
+    /// <summary>
+    /// Throttles framework update ticks and runs periodic camera processing.
+    /// </summary>
+    /// <param name="framework">The Dalamud framework service instance.</param>
     private void FrameworkOnUpdateEvent(IFramework framework)
     {
         if ((DateTime.Now - lastUpdateTime).TotalMilliseconds >= DelayMs)
@@ -227,17 +275,9 @@ public class CamController : IDisposable
         }
     }
 
-    private void OnConfigurationChanged()
-    {
-        shouldAdjustDistance = true;
-    }
-
-    internal void ReHook()
-    {
-        DisposeHooks();
-        InitializeHooks();
-    }
-
+    /// <summary>
+    /// Disables and disposes active native camera hooks.
+    /// </summary>
     private void DisposeHooks()
     {
         getCameraPositionHook?.Dispose();
@@ -246,6 +286,9 @@ public class CamController : IDisposable
         shouldDrawGameObjectHook = null;
     }
 
+    /// <summary>
+    /// Disposes camera hooks, unsubscribes from framework events, and restores default vertical camera limits.
+    /// </summary>
     public void Dispose()
     {
         DisposeHooks();
@@ -264,6 +307,10 @@ public class CamController : IDisposable
 
     #region Public Methods
 
+    /// <summary>
+    /// Sets a new target third-person camera distance and requests distance adjustment.
+    /// </summary>
+    /// <param name="distance">Desired camera distance in meters.</param>
     public void SetTargetDistance(float distance)
     {
         targetDistance = ClampCameraDistance(distance);
@@ -273,6 +320,9 @@ public class CamController : IDisposable
 
     #region Internal Processing
 
+    /// <summary>
+    /// Runs throttled per-frame camera logic, such as adjusting third-person distance when not in first person or GPose.
+    /// </summary>
     private void ProcessThrottledFrameworkUpdate()
     {
         if (!configuration.Enabled) return;
@@ -297,6 +347,9 @@ public class CamController : IDisposable
     #endregion
 
     #region First Person Handling
+    /// <summary>
+    /// Detour for <c>ShouldDrawGameObject</c> that keeps nearby characters visible during first-person tracking when unmounted.
+    /// </summary>
     private unsafe bool ShouldDrawGameObjectDetour(CameraBase* thisPtr, GameObject* gameObject, Vector3* sceneCameraPos, Vector3* lookAtVector)
     {
         if (!configuration.Enabled)
@@ -324,6 +377,9 @@ public class CamController : IDisposable
         return shouldDrawGameObjectHook!.Original(thisPtr, gameObject, sceneCameraPos, lookAtVector);
     }
 
+    /// <summary>
+    /// Detour for <c>GetCameraPosition</c> that optionally overrides the computed camera position for first-person tracking.
+    /// </summary>
     private unsafe void GetCameraPositionDetour(Camera* camera, GameObject* target, Vector3* position, byte swapPerson)
     {
         getCameraPositionHook!.Original(camera, target, position, swapPerson);
@@ -333,6 +389,11 @@ public class CamController : IDisposable
         }
     }
 
+    /// <summary>
+    /// Checks whether the given character has a visible draw object.
+    /// </summary>
+    /// <param name="chara">Pointer to the battle character.</param>
+    /// <returns><see langword="true"/> if the character's draw object exists and is visible; otherwise, <see langword="false"/>.</returns>
     private unsafe bool DrawObjectExists(BattleChara* chara)
     {
         if ((nint)chara == 0 || (nint)chara->DrawObject == 0) return false;
@@ -368,6 +429,10 @@ public class CamController : IDisposable
         return chara;
     }
 
+    /// <summary>
+    /// Computes first-person camera position, yaw, pitch, and roll from head/VMC tracking and writes the result to <c>nextCameraPosition</c> and camera fields.
+    /// </summary>
+    /// <returns><see langword="true"/> if the camera position was overridden; otherwise, <see langword="false"/>.</returns>
     private unsafe bool TryOverrideCameraPosition()
     {
         var chara = GetTargetCharacter();
@@ -627,18 +692,30 @@ public class CamController : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Expands vertical camera angle limits (<c>DirVMin</c>/<c>DirVMax</c>) to allow full pitch range in first person.
+    /// </summary>
     private static unsafe void DerestrictDirV()
     {
         Cam->DirVMin = -2 * MathF.PI;
         Cam->DirVMax = 2 * MathF.PI;
     }
 
+    /// <summary>
+    /// Restores vertical camera angle limits (<c>DirVMin</c>/<c>DirVMax</c>) to their default values.
+    /// </summary>
     private static unsafe void RestoreDirVRestrictions()
     {
         Cam->DirVMin = DefaultDirVMin;
         Cam->DirVMax = DefaultDirVMax;
     }
 
+    /// <summary>
+    /// Extracts yaw, pitch, roll, and inversion state from a rotation quaternion, optionally unwrapping inverted orientations.
+    /// </summary>
+    /// <param name="rotation">Source orientation quaternion.</param>
+    /// <param name="correctInvertion">When <see langword="true"/>, unwraps pitch and yaw if the orientation is upside-down.</param>
+    /// <returns>A tuple containing yaw, pitch, roll in radians, and whether the orientation was inverted.</returns>
     private static (float yaw, float pitch, float roll, bool inverted) GetYawPitchRoll(Quaternion rotation, bool correctInvertion = false)
     {
         var fwd = Vector3.Transform(System.Numerics.Vector3.UnitZ, rotation);
@@ -676,6 +753,14 @@ public class CamController : IDisposable
         return (yaw, pitch, roll, inverted);
     }
 
+    /// <summary>
+    /// Calculates normalized minimum and maximum directional bounds around a root rotation and offset in radians.
+    /// </summary>
+    /// <param name="rootRotation">Base orientation angle in radians.</param>
+    /// <param name="degrees">Allowed angular range in degrees in each direction.</param>
+    /// <param name="offset">Angular offset in radians.</param>
+    /// <param name="dirMin">Outputs the wrapped minimum angle in radians.</param>
+    /// <param name="dirMax">Outputs the wrapped maximum angle in radians.</param>
     private static void CalculateDirectionRange(float rootRotation, int degrees, float offset, out float dirMin, out float dirMax)
     {
         var targetDir = rootRotation - offset;
@@ -701,6 +786,12 @@ public class CamController : IDisposable
         }
     }
 
+    /// <summary>
+    /// Computes the shortest signed angular difference from <paramref name="two"/> to <paramref name="one"/> in radians, normalized to [-π, π].
+    /// </summary>
+    /// <param name="one">Target angle in radians.</param>
+    /// <param name="two">Reference angle in radians.</param>
+    /// <returns>Signed angle difference in radians.</returns>
     private static float RotationalDifference(float one, float two)
     {
         var diff = one - two;
@@ -715,8 +806,14 @@ public class CamController : IDisposable
         return diff;
     }
 
-    // Assumes radians input
-    private float ClampRotational(float rad, float min, float max)
+    /// <summary>
+    /// Clamps an angle in radians to the closest boundary of the specified range, accounting for angular wrap-around.
+    /// </summary>
+    /// <param name="rad">Angle in radians to clamp.</param>
+    /// <param name="min">Minimum allowed angle in radians.</param>
+    /// <param name="max">Maximum allowed angle in radians.</param>
+    /// <returns>The clamped angle in radians.</returns>
+    private static float ClampRotational(float rad, float min, float max)
     {
         // Clamp input to be within target range by choosing closest edge, accounting for wrap-around
         if ((min < max && (rad < min || rad > max)) ||
@@ -738,7 +835,12 @@ public class CamController : IDisposable
         return rad;
     }
 
-    private float RotateDir(float dir)
+    /// <summary>
+    /// Wraps a direction angle in radians into the [-π, π] range.
+    /// </summary>
+    /// <param name="dir">Direction angle in radians.</param>
+    /// <returns>Normalized direction angle in radians.</returns>
+    private static float RotateDir(float dir)
     {
         const float maxRotation = MathF.PI;
         if (dir > maxRotation)
@@ -752,6 +854,11 @@ public class CamController : IDisposable
         return dir;
     }
 
+    /// <summary>
+    /// Converts a <see cref="Transform"/> (scale, rotation, translation) into a 4x4 transformation matrix.
+    /// </summary>
+    /// <param name="transform">The transform to convert.</param>
+    /// <returns>The resulting 4x4 matrix.</returns>
     public static Matrix4x4 ToMatrix(Transform transform)
     {
         System.Numerics.Matrix4x4 mat = Matrix4x4.Identity;
@@ -770,6 +877,9 @@ public class CamController : IDisposable
     #endregion
 
     #region Third Person Handling
+    /// <summary>
+    /// Smoothly adjusts the third-person camera distance toward the target distance, accounting for mount hitbox size if enabled.
+    /// </summary>
     private void SetThirdPersonDistance()
     {
         if (!configuration.ThirdPersonControl || !shouldAdjustDistance) return;
@@ -788,8 +898,18 @@ public class CamController : IDisposable
         AdjustCameraDistanceTowards(distance);
     }
 
-    private bool CameraIsAtDistance(float distance) => Math.Abs(CurrentDistance - distance) < 0.01f;
+    /// <summary>
+    /// Checks whether the current camera distance is within a small tolerance of the specified distance.
+    /// </summary>
+    /// <param name="distance">Target distance to compare against.</param>
+    /// <returns><see langword="true"/> if within tolerance; otherwise, <see langword="false"/>.</returns>
+    private static bool CameraIsAtDistance(float distance) => Math.Abs(CurrentDistance - distance) < 0.01f;
 
+    /// <summary>
+    /// Adjusts a base camera distance for larger mounts based on the active mount's hitbox radius.
+    /// </summary>
+    /// <param name="baseDistance">The unadjusted target distance.</param>
+    /// <returns>The hitbox-adjusted distance clamped to valid camera bounds.</returns>
     private float MountHitboxAdjustedDistance(float baseDistance)
     {
         if (!configuration.UseFurtherCameraForLargerMounts) return baseDistance;
@@ -807,28 +927,38 @@ public class CamController : IDisposable
         }
     }
 
-    private void AdjustCameraDistanceTowards(float distance)
+    /// <summary>
+    /// Steps the current camera distance toward <paramref name="distance"/> by at most <c>MaxDiff</c> per update.
+    /// </summary>
+    /// <param name="distance">Target distance in meters.</param>
+    private static void AdjustCameraDistanceTowards(float distance)
     {
         if (Math.Abs(CurrentDistance - distance) > MaxDiff)
         {
             var diff = MaxDiff;
             if (CurrentDistance > distance) diff *= -1;
             var newDist = CurrentDistance + diff;
-            Api.PluginLog.Debug($"Setting distance to {newDist}, target was {distance} ({targetDistance} before hitbox adjustments)");
+            //Api.PluginLog.Debug($"Setting distance to {newDist}, target was {distance} ({targetDistance} before hitbox adjustments)");
             CurrentDistance = newDist;
         }
         else
         {
-            Api.PluginLog.Debug($"Setting distance to {distance}, target was {distance} ({targetDistance} before hitbox adjustments)");
+            //Api.PluginLog.Debug($"Setting distance to {distance}, target was {distance} ({targetDistance} before hitbox adjustments)");
             CurrentDistance = distance;
         }
     }
 
-    private static float ClampCameraDistance(float distance)
-    {
-        return Math.Clamp(distance, MinCameraDistance, MaxCameraDistance);
-    }
+    /// <summary>
+    /// Clamps a camera distance to the allowed minimum and maximum third-person camera range.
+    /// </summary>
+    /// <param name="distance">Distance value to clamp.</param>
+    /// <returns>The clamped camera distance.</returns>
+    private static float ClampCameraDistance(float distance) => Math.Clamp(distance, MinCameraDistance, MaxCameraDistance);
 
+    /// <summary>
+    /// Retrieves the hitbox radius of the local player's current mount, or <c>1f</c> if unmounted.
+    /// </summary>
+    /// <returns>The mount's hitbox radius, or <c>1f</c> when not mounted.</returns>
     private static float MountHitboxSize()
     {
         var mountId = Api.Objects.LocalPlayer?.CurrentMount?.ValueNullable?.RowId;

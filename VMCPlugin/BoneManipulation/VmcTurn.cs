@@ -8,8 +8,8 @@ namespace VMCPlugin.BoneManipulation
 {
     public unsafe partial class VmcHeadReceiver
     {
-        private double lastTurnT;
-        private double lastTurnLog;
+        private double _lastTurnT;
+        private double _lastTurnLog;
 
 
         private static unsafe bool PlayerMoving()
@@ -30,11 +30,11 @@ namespace VMCPlugin.BoneManipulation
         private void ApplyBodyTurn(nint addr)
         {
             var now = GetNowSeconds();
-            var dt = (float)Math.Clamp(now - lastTurnT, 0.0, 0.1);
-            lastTurnT = now;
+            var dt = (float)Math.Clamp(now - _lastTurnT, 0.0, 0.1);
+            _lastTurnT = now;
 
-            if (!((config.TurnBodyStanding && idle && PlayerStands()) ||  // Stand: Option an und wirklich frei
-                (config.TurnBodyWalking && !idle && PlayerMoving())))    // Bewegung: Option an und läuft
+            if (!((_config.TurnBodyStanding && _idle && PlayerStands()) ||  // Stand: Option an und wirklich frei
+                (_config.TurnBodyWalking && !_idle && PlayerMoving())))    // Bewegung: Option an und läuft
                 return;
 
 
@@ -50,13 +50,13 @@ namespace VMCPlugin.BoneManipulation
             var r = pose->ModelPose[0].Rotation;
             var fwd = Vector3.Transform(Vector3.UnitX, new Quaternion(r.X, r.Y, r.Z, r.W));
             const float Deg = MathF.PI / 180f;
-            var yaw = MathF.Atan2(fwd.X, fwd.Z) - config.TurnCenterDeg * Deg;
-            if (config.DebugEmotes && now - lastTurnLog > 0.5) { lastTurnLog = now; log.Debug($"Kopf-Yaw rel. Körper: {yaw / Deg:0.0}°"); }
+            var yaw = MathF.Atan2(fwd.X, fwd.Z) - _config.TurnCenterDeg * Deg;
+            if (_config.DebugEmotes && now - _lastTurnLog > 0.5) { _lastTurnLog = now; _log.Debug($"Kopf-Yaw rel. Körper: {yaw / Deg:0.0}°"); }
 
-            var k = Math.Clamp((MathF.Abs(yaw) - config.TurnStartDeg * Deg) / (30f * Deg), 0f, 1f);   // weich einblenden
+            var k = Math.Clamp((MathF.Abs(yaw) - _config.TurnStartDeg * Deg) / (30f * Deg), 0f, 1f);   // weich einblenden
             if (k <= 0f) return;
 
-            var nr = chara->GameObject.Rotation + MathF.Sign(yaw) * k * config.TurnSpeedDeg * Deg * dt;
+            var nr = chara->GameObject.Rotation + MathF.Sign(yaw) * k * _config.TurnSpeedDeg * Deg * dt;
             if (nr > MathF.PI) nr -= 2f * MathF.PI; else if (nr < -MathF.PI) nr += 2f * MathF.PI;
             chara->GameObject.SetRotation(nr);
         }

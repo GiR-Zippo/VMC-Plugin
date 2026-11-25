@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
-using System.Printing;
 using VMCPlugin.BoneManipulation;
 using VMCPlugin.Config;
 using VMCPlugin.Offsets;
@@ -39,7 +38,7 @@ internal class ConfigUi : IDisposable
         return true;
     }
 
-    private List<(uint Id, string Name)> Emotes()
+    private List<(uint Id, string Name)> Emotes(bool sortById = false)
     {
         if (_emotes != null) return _emotes;
         _emotes = new();
@@ -47,32 +46,43 @@ internal class ConfigUi : IDisposable
             foreach (var e in sheet)
             {
                 var n = e.Name.ExtractText();
-                if (!string.IsNullOrWhiteSpace(n)) _emotes.Add((e.RowId, n));
+                if (!string.IsNullOrWhiteSpace(n) || sortById) 
+                    _emotes.Add((e.RowId, n));
             }
-        _emotes.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+        if (sortById)
+            _emotes.Sort((a, b) => a.Id.CompareTo(b.Id));
+        else
+            _emotes.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
         return _emotes;
     }
 
-    private bool EmoteCombo(PresetRule r)
+    private bool EmoteCombo(PresetRule r, bool showIds = false)
     {
         var ch = false;
-        var cur = r.Value == 0 ? "(Emote wählen)" : Emotes().Find(x => x.Id == r.Value).Name ?? $"#{r.Value}";
+        var found = Emotes(showIds).Find(x => x.Id == r.Value);
+        var cur = r.Value == 0 ? "(Emote wählen)"
+            : found.Name == null ? $"#{r.Value}"
+            : showIds ? $"{found.Name} ({r.Value})" : found.Name;
 
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(220f);
         if (ImGui.BeginCombo("##emote", cur))
         {
-            ImGui.SetNextItemWidth(-1f);
-            ImGui.InputTextWithHint("##flt", "Suchen…", ref _emoteFilter, 64);
+            ImGui.SetNextItemWidth(-60f);
+            ImGui.InputTextWithHint("##flt", "Name oder ID…", ref _emoteFilter, 64);
+            ImGui.SameLine();
+            ImGui.Checkbox("IDs", ref showIds);
+
             foreach (var (id, name) in Emotes())
             {
-                if (_emoteFilter.Length > 0 && !name.Contains(_emoteFilter, StringComparison.OrdinalIgnoreCase)) continue;
-                if (ImGui.Selectable($"{name}##{id}", id == r.Value)) { r.Value = (int)id; ch = true; }
+                if (_emoteFilter.Length > 0
+                    && !name.Contains(_emoteFilter, StringComparison.OrdinalIgnoreCase)
+                    && !id.ToString().Contains(_emoteFilter)) continue;
+
+                var label = showIds ? $"{id,4}  {name}##{id}" : $"{name}##{id}";
+                if (ImGui.Selectable(label, id == r.Value)) { r.Value = (int)id; ch = true; }
             }
             ImGui.EndCombo();
         }
-        ImGui.SameLine();
-        //if (ImGui.SmallButton("Jetzt")) { r.Value = _vmcRecv.CurrentEmoteId; ch = true; }
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Das Emote übernehmen, das der Charakter gerade ausführt");
         return ch;
     }
 
@@ -97,9 +107,9 @@ internal class ConfigUi : IDisposable
     {
         "General",
         "Preset Rules",
+        "Presets",
         "VRM",
         "Hair",
-        "Presets",
         "Emotes",
         "Face Tracking",
         "FPView",
@@ -160,13 +170,13 @@ internal class ConfigUi : IDisposable
                     changed = DrawPresetRules();
                     break;
                 case 2:
-                    changed = DrawVmcChains();
+                    changed = DrawPresets();
                     break;
                 case 3:
-                    changed = DrawHair();
+                    changed = DrawVmcChains();
                     break;
                 case 4:
-                    changed = DrawPresets();
+                    changed = DrawHair();
                     break;
                 case 5:
                     changed = DrawEmotes();
@@ -210,65 +220,124 @@ internal class ConfigUi : IDisposable
         bool ch = false;
         ImGui.Spacing();
         ImGui.Separator();
-        ImGui.TextDisabled("Automatik (erste passende Regel gewinnt)");
+        ImGui.TextDisabled("Set Emote/Pose on top");
         //ImGui.TextUnformatted(_vmcRecv.StateText);   // zeigt die aktuellen Werte zum Eintragen
 
         var rules = _config.PresetRules;
         var rm = -1;
-        for (var i = 0; i < rules.Count; i++)
+        var moveFrom = -1;
+        var moveTo = -1;
+
+        if (ImGui.BeginTable("##preset_rules", 6, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
         {
-            var r = rules[i];
-            ImGui.PushID(7000 + i);
+            ImGui.TableSetupColumn("On", ImGuiTableColumnFlags.WidthFixed, 28f);
+            ImGui.TableSetupColumn("Axis Lock", ImGuiTableColumnFlags.WidthFixed, 38f);
+            ImGui.TableSetupColumn("Trigger", ImGuiTableColumnFlags.WidthStretch, 1.1f);
+            ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch, 1.5f);
+            ImGui.TableSetupColumn("Preset", ImGuiTableColumnFlags.WidthStretch, 1.3f);
+            ImGui.TableSetupColumn("Order / Del", ImGuiTableColumnFlags.WidthFixed, 76f);
+            ImGui.TableHeadersRow();
 
-            ch |= Toggle("##on", r.Enabled, v => r.Enabled = v);
-            ImGui.SameLine();
-
-            ch |= Toggle("##laxis", r.LimitAxis, v => r.LimitAxis = v);
-            ImGui.SameLine();
-
-
-            var k = (int)r.Kind;
-            ImGui.SetNextItemWidth(90f);
-            if (ImGui.Combo("##k", ref k, EnumCache<TriggerKind>.Names, EnumCache<TriggerKind>.Names.Length)) { r.Kind = (TriggerKind)k; ch = true; }
-            ImGui.SameLine();
-
-            var v = r.Value;
-            switch (r.Kind)
+            for (var i = 0; i < rules.Count; i++)
             {
-                case TriggerKind.Emote:
-                    ch |= EmoteCombo(r);
-                    ImGui.SameLine();
-                    break;
-                case TriggerKind.EmoteBlend:
-                    r.Value = 255;
+                var r = rules[i];
+                ImGui.PushID(7000 + i);
+                ImGui.TableNextRow();
+
+                ImGui.TableNextColumn();
+                ch |= Toggle("##on", r.Enabled, v => r.Enabled = v);
+
+                ImGui.TableNextColumn();
+                ch |= Toggle("##laxis", r.LimitAxis, v => r.LimitAxis = v);
+
+                ImGui.TableNextColumn();
+                var k = (int)r.Kind;
+                ImGui.SetNextItemWidth(-1f);
+                if (ImGui.Combo("##k", ref k, EnumCache<TriggerKind>.Names, EnumCache<TriggerKind>.Names.Length))
+                {
+                    r.Kind = (TriggerKind)k;
                     ch = true;
-                    ImGui.SameLine();
-                    break;
+                }
 
-                case TriggerKind.Mode:
-                    if (EnumCombo<FFXIVClientStructs.FFXIV.Client.Game.Character.CharacterModes>("##v", ref v)) { r.Value = v; ch = true; }
-                    ImGui.SameLine();
-                    break;
-                case TriggerKind.Pose:
-                    if (EnumCombo<FFXIVClientStructs.FFXIV.Client.Game.Control.EmoteController.PoseType>("##v", ref v)) { r.Value = v; ch = true; }
-                    ImGui.SameLine();
-                    break;
+                ImGui.TableNextColumn();
+                var v = r.Value;
+                ImGui.SetNextItemWidth(-1f);
+                switch (r.Kind)
+                {
+                    case TriggerKind.Emote:
+                        ch |= EmoteCombo(r);
+                        break;
+                    case TriggerKind.EmoteStart:
+                        ch |= EmoteCombo(r, true);
+                        if (r.ValueB != 255)
+                        {
+                            r.ValueB = 255;
+                            ch = true;
+                        }
+                        break;
+                    case TriggerKind.EmoteEnd:
+                        ch |= EmoteCombo(r, true);
+                        if (r.ValueB != 255)
+                        {
+                            r.ValueB = 255;
+                            ch = true;
+                        }
+                        break;
+                    case TriggerKind.Mode:
+                        if (EnumCombo<FFXIVClientStructs.FFXIV.Client.Game.Character.CharacterModes>("##v", ref v))
+                        {
+                            r.Value = v;
+                            ch = true;
+                        }
+                        break;
+                    case TriggerKind.Pose:
+                        if (EnumCombo<FFXIVClientStructs.FFXIV.Client.Game.Control.EmoteController.PoseType>("##v", ref v))
+                        {
+                            r.Value = v;
+                            ch = true;
+                        }
+                        break;
+                    default:
+                        ImGui.TextDisabled("-");
+                        break;
+                }
+
+                ImGui.TableNextColumn();
+                ImGui.SetNextItemWidth(-1f);
+                if (ImGui.BeginCombo("##p", string.IsNullOrEmpty(r.Preset) ? "(Preset)" : r.Preset))
+                {
+                    foreach (var p in _config.Presets)
+                        if (ImGui.Selectable(p.Name, p.Name == r.Preset)) { r.Preset = p.Name; ch = true; }
+                    ImGui.EndCombo();
+                }
+
+                ImGui.TableNextColumn();
+                ImGui.BeginDisabled(i == 0);
+                if (ImGui.SmallButton("^")) { moveFrom = i; moveTo = i - 1; }
+                ImGui.EndDisabled();
+
+                ImGui.SameLine();
+                ImGui.BeginDisabled(i == rules.Count - 1);
+                if (ImGui.SmallButton("v")) { moveFrom = i; moveTo = i + 1; }
+                ImGui.EndDisabled();
+
+                ImGui.SameLine();
+                if (ImGui.SmallButton("x")) rm = i;
+
+                ImGui.PopID();
             }
 
-            ImGui.SetNextItemWidth(160f);
-            if (ImGui.BeginCombo("##p", string.IsNullOrEmpty(r.Preset) ? "(Preset)" : r.Preset))
-            {
-                foreach (var p in _config.Presets)
-                    if (ImGui.Selectable(p.Name, p.Name == r.Preset)) { r.Preset = p.Name; ch = true; }
-                ImGui.EndCombo();
-            }
-            ImGui.SameLine();
-            if (ImGui.SmallButton("x")) rm = i;
+            ImGui.EndTable();
+        }
 
-            ImGui.PopID();
+        if (moveFrom >= 0 && moveTo >= 0 && moveTo < rules.Count)
+        {
+            (rules[moveFrom], rules[moveTo]) = (rules[moveTo], rules[moveFrom]);
+            ch = true;
         }
         if (rm >= 0) { rules.RemoveAt(rm); ch = true; }
         if (ImGui.Button("+ Regel##auto")) { rules.Add(new PresetRule()); ch = true; }
+
         return ch;
     }
 
@@ -565,11 +634,13 @@ internal class ConfigUi : IDisposable
         ch |= Toggle("Enable third person camera control", _config.ThirdPersonControl, v => _config.ThirdPersonControl = v);
         ch |= Toggle("Use further camera for larger mounts", _config.UseFurtherCameraForLargerMounts, v => _config.UseFurtherCameraForLargerMounts = v);
 
-        ch |= Toggle("Char dreht bei extremer Kopfdrehung (Standing)", _config.TurnBodyStanding, v => _config.TurnBodyStanding = v);
-        ch |= Toggle("Char dreht bei extremer Kopfdrehung (Walking)", _config.TurnBodyWalking, v => _config.TurnBodyWalking = v);
-        ch |= SliderF("Start-Winkel (°)", _config.TurnStartDeg, 20f, 100f, v => _config.TurnStartDeg = v, "%.0f");
-        ch |= SliderF("Max. Tempo (°/s)", _config.TurnSpeedDeg, 10f, 180f, v => _config.TurnSpeedDeg = v, "%.0f");
-        ch |= SliderF("Mittelpunkt (°)", _config.TurnCenterDeg, -45f, 45f, v => _config.TurnCenterDeg = v, "%.1f");
+        ImGui.Spacing();
+        ImGui.TextDisabled("Turn character");
+        ch |= Toggle("Turn character on extreme head turn (Standing)", _config.TurnBodyStanding, v => _config.TurnBodyStanding = v);
+        ch |= Toggle("Turn character on extreme head turn (Walking)", _config.TurnBodyWalking, v => _config.TurnBodyWalking = v);
+        ch |= SliderF("Start angle (°)", _config.TurnStartDeg, 20f, 100f, v => _config.TurnStartDeg = v, "%.0f");
+        ch |= SliderF("Max turn speed (°/s)", _config.TurnSpeedDeg, 10f, 180f, v => _config.TurnSpeedDeg = v, "%.0f");
+        ch |= SliderF("Center offset (°)", _config.TurnCenterDeg, -45f, 45f, v => _config.TurnCenterDeg = v, "%.1f");
         return ch;
     }
 

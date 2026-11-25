@@ -12,40 +12,34 @@ using System.Numerics;
 using System.Text;
 using System.Threading;
 using VMCPlugin.Config;
-using VMCPlugin.Offsets;
 using ObjectType = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.ObjectType;
 
 namespace VMCPlugin.BoneManipulation;
 
 public unsafe partial class VmcHeadReceiver : IDisposable
 {
-    private CamController cam;
+    private CamController _cam;
 
     //--- Face Stuff
-    private readonly Dictionary<string, List<(int p, int b)>> faceIdx = new(StringComparer.OrdinalIgnoreCase);
-    private nint faceSkel;
-    private int faceSig;
+    private readonly Dictionary<string, List<(int p, int b)>> _faceIdx = new(StringComparer.OrdinalIgnoreCase);
+    private nint _faceSkel;
+    private int _faceSig;
     //---
 
-    //--- Head when in pose -> doze
-    private Quaternion headDelta = Quaternion.Identity;
-    private Quaternion headRestRot = Quaternion.Identity;
-    private bool animPose, enterPose;
-    private Quaternion headRef = Quaternion.Identity;
-    private float relW;
+    //--- Head when in pose like doze
+    private Quaternion _headDelta = Quaternion.Identity;
+    private Quaternion _headRestRot = Quaternion.Identity;
+    private Quaternion _headRef = Quaternion.Identity;
+    private float _relW;
     public float PoseHeadLimitDeg { get; set; } = 35f;
-    private int poseSig;
     //---
 
     private readonly record struct RNode(string Vmc, string Xiv, string? Parent, bool Lift, float Sx);
 
-    private static readonly RNode[] RetargetNodes = BuildNodes();
-    public static readonly string[] AllBones = RetargetNodes.Select(n => n.Vmc).ToArray(); // using System.Linq
+    private static readonly RNode[] _retargetNodes = BuildNodes();
+    public static readonly string[] AllBones = _retargetNodes.Select(n => n.Vmc).ToArray(); // using System.Linq
 
-    /*private HashSet<string>? ActiveSet => config.Presets.Count == 0 ? null
-        : config.Presets[Math.Clamp(config.ActivePreset, 0, config.Presets.Count - 1)].Bones;*/
-
-    private static readonly Dictionary<string, string> RetargetKeys = BuildKeyMap();
+    private static readonly Dictionary<string, string> _retargetKeys = BuildKeyMap();
 
     private static RNode[] BuildNodes()
     {
@@ -84,27 +78,27 @@ public unsafe partial class VmcHeadReceiver : IDisposable
         return d;
     }
 
-    private readonly Dictionary<string, float> blends = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<EmoteRule, (double since, double fired)> emoteState = new();
+    private readonly Dictionary<string, float> _blends = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<EmoteRule, (double since, double fired)> _emoteState = new();
     public readonly ConcurrentQueue<string> Commands = new();
-    private readonly Dictionary<string, float> loggedBlends = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, float> _loggedBlends = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Gets the latest received blend shape value for the specified name.
     /// </summary>
     /// <param name="n">The blend shape name.</param>
     /// <returns>The current blend value, or <c>0f</c> if not found.</returns>
-    public float GetBlend(string n) { lock (sync) return blends.TryGetValue(n, out var v) ? v : 0f; }
+    public float GetBlend(string n) { lock (_sync) return _blends.TryGetValue(n, out var v) ? v : 0f; }
 
-    private readonly Dictionary<FaceRule, float> faceSm = new();
-    private double lastFaceT;
+    private readonly Dictionary<FaceRule, float> _faceSm = new();
+    private double _lastFaceT;
 
     /// <summary>
     /// Converts a Unity quaternion into Final Fantasy XIV's coordinate space based on the configured VRM version.
     /// </summary>
     /// <param name="q">The source rotation quaternion in Unity coordinates.</param>
     /// <returns>The transformed rotation quaternion in FFXIV coordinates.</returns>
-    private Quaternion ToXiv(Quaternion q) => config.Vrm1
+    private Quaternion ToXiv(Quaternion q) => _config.Vrm1
         ? new Quaternion(q.X, -q.Y, -q.Z, q.W)    // VRM 1.0: schaut +Z, links = -X → X spiegeln
         : new Quaternion(-q.X, -q.Y, q.Z, q.W);   // VRM 0.x: schaut -Z → Z spiegeln
 
@@ -119,55 +113,55 @@ public unsafe partial class VmcHeadReceiver : IDisposable
         if (twist.LengthSquared() < 1e-8f) return q;
         return Quaternion.Normalize(q * Quaternion.Conjugate(Quaternion.Normalize(twist)));
     }
-    private const double BoneTimeoutSeconds = 1.0;//0.3;   // ab hier gilt ein Bone als "ohne Update"
-    private readonly Dictionary<string, double> latestBoneTimes = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, float> retargetW = new(StringComparer.OrdinalIgnoreCase);
-    private double lastRetargetT;
+    private const double _boneTimeoutSeconds = 1.0;//0.3;   // ab hier gilt ein Bone als "ohne Update"
+    private readonly Dictionary<string, double> _latestBoneTimes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, float> _retargetW = new(StringComparer.OrdinalIgnoreCase);
+    private double _lastRetargetT;
 
-    private readonly Dictionary<string, Quaternion> latestBoneRots = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Quaternion> _latestBoneRots = new(StringComparer.OrdinalIgnoreCase);
 
-    private const double PacketTimeoutSeconds = 0.5;
+    private const double _packetTimeoutSeconds = 0.5;
 
-    private readonly IObjectTable objects;
-    private readonly IPluginLog log;
-    private readonly Configuration config;
+    private readonly IObjectTable _objects;
+    private readonly IPluginLog _log;
+    private readonly Configuration _config;
 
-    private readonly object sync = new();
-    private UdpClient? udp;
-    private CancellationTokenSource? cts;
-    private Thread? recvThread;
+    private readonly object _sync = new();
+    private UdpClient? _udp;
+    private CancellationTokenSource? _cts;
+    private Thread? _recvThread;
 
-    private bool enabled;
-    private int port = 39539;
+    private bool _enabled;
+    private int _port = 39539;
 
-    private double lastPacketUtcSec;
-    private bool hasPacket;
-    private bool disposed;
+    private double _lastPacketUtcSec;
+    private bool _hasPacket;
+    private bool _disposed;
 
     public bool Enabled
     {
-        get => enabled;
+        get => _enabled;
         set
         {
-            if (enabled == value) return;
-            enabled = value;
-            if (enabled) StartListener(port);
+            if (_enabled == value) return;
+            _enabled = value;
+            if (_enabled) StartListener(_port);
             else StopListener();
         }
     }
 
     public int Port
     {
-        get => port;
+        get => _port;
         set
         {
             var clamped = Math.Clamp(value, 1024, 65535);
-            if (port == clamped) return;
-            port = clamped;
-            if (enabled)
+            if (_port == clamped) return;
+            _port = clamped;
+            if (_enabled)
             {
                 StopListener();
-                StartListener(port);
+                StartListener(_port);
             }
         }
     }
@@ -181,10 +175,10 @@ public unsafe partial class VmcHeadReceiver : IDisposable
     /// <param name="cam">The camera controller used for first-person head tracking updates.</param>
     public VmcHeadReceiver(IObjectTable objects, IPluginLog log, Configuration conf, CamController cam)
     {
-        this.objects = objects;
-        this.log = log;
-        this.config = conf;
-        this.cam = cam;
+        this._objects = objects;
+        this._log = log;
+        this._config = conf;
+        this._cam = cam;
     }
 
     #region Network
@@ -195,27 +189,27 @@ public unsafe partial class VmcHeadReceiver : IDisposable
     public void StartListener(int listenPort)
     {
         StopListener();
-        if (disposed) return;
+        if (_disposed) return;
 
         try
         {
-            cts = new CancellationTokenSource();
-            udp = new UdpClient(listenPort);
-            udp.Client.ReceiveTimeout = 250;
+            _cts = new CancellationTokenSource();
+            _udp = new UdpClient(listenPort);
+            _udp.Client.ReceiveTimeout = 250;
 
-            var token = cts.Token;
-            recvThread = new Thread(() => ReceiveLoop(token))
+            var token = _cts.Token;
+            _recvThread = new Thread(() => ReceiveLoop(token))
             {
                 IsBackground = true,
                 Name = "VmcHeadReceiver"
             };
-            recvThread.Start();
+            _recvThread.Start();
 
-            log.Information($"VMC Receiver gestartet auf UDP Port {listenPort}.");
+            _log.Information($"VMC Receiver gestartet auf UDP Port {listenPort}.");
         }
         catch (Exception ex)
         {
-            log.Error(ex, $"VMC Receiver konnte Port {listenPort} nicht öffnen.");
+            _log.Error(ex, $"VMC Receiver konnte Port {listenPort} nicht öffnen.");
         }
     }
 
@@ -224,12 +218,12 @@ public unsafe partial class VmcHeadReceiver : IDisposable
     /// </summary>
     public void StopListener()
     {
-        try { cts?.Cancel(); } catch { }
-        try { udp?.Close(); udp?.Dispose(); } catch { }
-        udp = null;
-        cts?.Dispose();
-        cts = null;
-        recvThread = null;
+        try { _cts?.Cancel(); } catch { }
+        try { _udp?.Close(); _udp?.Dispose(); } catch { }
+        _udp = null;
+        _cts?.Dispose();
+        _cts = null;
+        _recvThread = null;
     }
 
     /// <summary>
@@ -240,11 +234,11 @@ public unsafe partial class VmcHeadReceiver : IDisposable
     {
         var remote = new IPEndPoint(IPAddress.Any, 0);
 
-        while (!token.IsCancellationRequested && udp != null)
+        while (!token.IsCancellationRequested && _udp != null)
         {
             try
             {
-                var data = udp.Receive(ref remote);
+                var data = _udp.Receive(ref remote);
                 if (data == null || data.Length == 0) continue;
                 ParseOscPacket(data);
             }
@@ -259,7 +253,7 @@ public unsafe partial class VmcHeadReceiver : IDisposable
             catch (Exception ex)
             {
                 if (!token.IsCancellationRequested)
-                    log.Warning(ex, "VMC: Fehler beim Empfangen eines OSC-Pakets.");
+                    _log.Warning(ex, "VMC: Fehler beim Empfangen eines OSC-Pakets.");
             }
         }
     }
@@ -310,12 +304,12 @@ public unsafe partial class VmcHeadReceiver : IDisposable
             {
                 var name = bn.Trim();
                 var val = ReadSingleBE(msg[idx..]);
-                lock (sync) blends[name] = val;
+                lock (_sync) _blends[name] = val;
 
-                if (config.DebugEmotes && (!loggedBlends.TryGetValue(name, out var lv) || MathF.Abs(val - lv) >= 0.1f))
+                if (_config.DebugEmotes && (!_loggedBlends.TryGetValue(name, out var lv) || MathF.Abs(val - lv) >= 0.1f))
                 {
-                    loggedBlends[name] = val;
-                    log.Debug($"VMC Blend: {name} = {val:0.00}");
+                    _loggedBlends[name] = val;
+                    _log.Debug($"VMC Blend: {name} = {val:0.00}");
                 }
             }
             return;
@@ -366,9 +360,7 @@ public unsafe partial class VmcHeadReceiver : IDisposable
             StoreBoneRotation(boneName.Trim(), qx, qy, qz, qw);
         }
     }
-    #endregion
 
-    #region NetworkFunction
     /// <summary>
     /// Validates, normalizes, jitter-filters, and stores a received bone rotation along with its timestamp.
     /// </summary>
@@ -388,17 +380,17 @@ public unsafe partial class VmcHeadReceiver : IDisposable
 
         var now = GetNowSeconds();
 
-        lock (sync)
+        lock (_sync)
         {
-            hasPacket = true;
-            lastPacketUtcSec = now;   // Stream bleibt "frisch", auch wenn das Paket verworfen wird
+            _hasPacket = true;
+            _lastPacketUtcSec = now;   // Stream bleibt "frisch", auch wenn das Paket verworfen wird
 
-            if (latestBoneRots.TryGetValue(canonicalKey, out var prev)
-                && MathF.Abs(Quaternion.Dot(prev, rot)) > MathF.Cos(config.JitterDeg * MathF.PI / 360f))
+            if (_latestBoneRots.TryGetValue(canonicalKey, out var prev)
+                && MathF.Abs(Quaternion.Dot(prev, rot)) > MathF.Cos(_config.JitterDeg * MathF.PI / 360f))
                 return;   // Mikroruckler verwerfen
 
-            latestBoneRots[canonicalKey] = rot;
-            latestBoneTimes[canonicalKey] = now;
+            _latestBoneRots[canonicalKey] = rot;
+            _latestBoneTimes[canonicalKey] = now;
         }
     }
 
@@ -408,10 +400,7 @@ public unsafe partial class VmcHeadReceiver : IDisposable
     /// <param name="incomingBoneName">The bone name received from VMC.</param>
     /// <param name="canonicalKey">When found, outputs the canonical retarget key.</param>
     /// <returns><c>true</c> if the bone name is mapped for retargeting; otherwise, <c>false</c>.</returns>
-    private bool TryGetConfiguredSourceKey(string incomingBoneName, out string canonicalKey)
-    {
-        return RetargetKeys.TryGetValue(incomingBoneName, out canonicalKey);
-    }
+    private bool TryGetConfiguredSourceKey(string incomingBoneName, out string canonicalKey) => _retargetKeys.TryGetValue(incomingBoneName, out canonicalKey);
     #endregion
 
 
@@ -447,39 +436,32 @@ public unsafe partial class VmcHeadReceiver : IDisposable
     /// </summary>
     public void Apply()
     {
-        if (!enabled) return;
-
-        bool isFresh;
-        Dictionary<string, Quaternion> boneSnapshot;
-        Dictionary<string, double> timeSnapshot;
-        lock (sync)
-        {
-            isFresh = hasPacket && (GetNowSeconds() - lastPacketUtcSec <= PacketTimeoutSeconds);
-            boneSnapshot = new Dictionary<string, Quaternion>(latestBoneRots, StringComparer.OrdinalIgnoreCase);
-            timeSnapshot = new Dictionary<string, double>(latestBoneTimes, StringComparer.OrdinalIgnoreCase);
-        }
-        if (!isFresh) return;
-
-        var lp = objects.LocalPlayer;
-        if (lp == null) return;
-
+        if (!_enabled) return;
 
         ReadState();
         ResolvePreset();
 
-        var inPose = InAnimPose();
-        var sig = (stMode << 24) | (stPose << 16) | stEmote;
-        if (inPose && (!animPose || sig != poseSig))
-            enterPose = true;   // Eintritt oder Wechsel der Pose → neue Mitte
-        animPose = inPose;
-        poseSig = sig;
+        bool isFresh;
+        Dictionary<string, Quaternion> boneSnapshot;
+        Dictionary<string, double> timeSnapshot;
+        lock (_sync)
+        {
+            isFresh = _hasPacket && (GetNowSeconds() - _lastPacketUtcSec <= _packetTimeoutSeconds);
+            boneSnapshot = new Dictionary<string, Quaternion>(_latestBoneRots, StringComparer.OrdinalIgnoreCase);
+            timeSnapshot = new Dictionary<string, double>(_latestBoneTimes, StringComparer.OrdinalIgnoreCase);
+        }
+        if (!isFresh) return;
+
+        var lp = _objects.LocalPlayer;
+        if (lp == null) return;
+
 
         ApplyFullRetarget(lp.Address, boneSnapshot, timeSnapshot);
 
-        if (config.FaceTracking)
+        if (_config.FaceTracking)
             ApplyFace(lp.Address, isFresh);
 
-        if (config.HairSpring)
+        if (_config.HairSpring)
         {
             UpdateIdle(lp.Position);
             ApplyHair(lp.Address);
@@ -528,11 +510,11 @@ public unsafe partial class VmcHeadReceiver : IDisposable
         var model = new Dictionary<string, Quaternion>(StringComparer.OrdinalIgnoreCase);
 
         var now = GetNowSeconds();
-        var dt = (float)Math.Clamp(now - lastRetargetT, 0.0, 0.1);
-        lastRetargetT = now;
+        var dt = (float)Math.Clamp(now - _lastRetargetT, 0.0, 0.1);
+        _lastRetargetT = now;
         var anyActive = false;
         var active = ActiveSet;
-        foreach (var n in RetargetNodes)
+        foreach (var n in _retargetNodes)
         {
             var hasData = snap.TryGetValue(n.Vmc, out var raw);
             var local = hasData ? ToXiv(raw) : Quaternion.Identity;
@@ -542,18 +524,18 @@ public unsafe partial class VmcHeadReceiver : IDisposable
             var m = Quaternion.Normalize(parentRot * local);
             model[n.Vmc] = m;
 
-            var fresh = times.TryGetValue(n.Vmc, out var ts) && now - ts <= BoneTimeoutSeconds;
+            var fresh = times.TryGetValue(n.Vmc, out var ts) && now - ts <= _boneTimeoutSeconds;
             var off = active != null && !active.Contains(n.Vmc);
 
             //Disable condition (when in emote mode)
             if (ActiveSetLimitAxis)
-                off |= animPose && n.Vmc == "Neck";
+                off |= _animPose && n.Vmc == "Neck";
 
-            var goal = hasData && fresh && !off ? Math.Clamp(config.RetargetBlend, 0f, 1f) : 0f;
-            retargetW.TryGetValue(n.Vmc, out var w);
-            var step = dt / MathF.Max(0.01f, config.RetargetFadeSec);
+            var goal = hasData && fresh && !off ? Math.Clamp(_config.RetargetBlend, 0f, 1f) : 0f;
+            _retargetW.TryGetValue(n.Vmc, out var w);
+            var step = dt / MathF.Max(0.01f, _config.RetargetFadeSec);
             w = w < goal ? MathF.Min(goal, w + step) : MathF.Max(goal, w - step);
-            retargetW[n.Vmc] = w;
+            _retargetW[n.Vmc] = w;
 
             if (w > 0.001f)
                 anyActive = true;
@@ -571,19 +553,19 @@ public unsafe partial class VmcHeadReceiver : IDisposable
             //Head relative to pose when in pose loop
             if (n.Vmc == "Head")
             {
-                if (enterPose) { headRef = v; enterPose = false; }   // aktuelle Kopfhaltung = Mitte der Pose
-                var fade = MathF.Max(0.01f, config.RetargetFadeSec);
-                relW = animPose ? MathF.Min(1f, relW + dt / fade) : MathF.Max(0f, relW - dt / fade);
-                if (relW > 0.001f)
+                if (_enterPose) { _headRef = v; _enterPose = false; }   // aktuelle Kopfhaltung = Mitte der Pose
+                var fade = MathF.Max(0.01f, _config.RetargetFadeSec);
+                _relW = _animPose ? MathF.Min(1f, _relW + dt / fade) : MathF.Max(0f, _relW - dt / fade);
+                if (_relW > 0.001f)
                 {
-                    var d = Quaternion.Normalize(v * Quaternion.Conjugate(headRef));
+                    var d = Quaternion.Normalize(v * Quaternion.Conjugate(_headRef));
                     if (ActiveSetLimitAxis)
                         d = SoftLimit(d, PoseHeadLimitDeg * (MathF.PI / 180f));
 
-                    headDelta = d;
-                    headRestRot = rest;   // Ruhe-Rotation von j_kao (Referenzpose)
+                    _headDelta = d;
+                    _headRestRot = rest;   // Ruhe-Rotation von j_kao (Referenzpose)
 
-                    delta = Quaternion.Slerp(delta, d, relW);
+                    delta = Quaternion.Slerp(delta, d, _relW);
                 }
             }
 
@@ -595,7 +577,7 @@ public unsafe partial class VmcHeadReceiver : IDisposable
         }
 
         //Process when FPV is enabled
-        if (config.FirstPersonLook)
+        if (_config.FirstPersonLook)
         {
             if (skel->PartialSkeletonCount > 1)
             {
@@ -604,15 +586,15 @@ public unsafe partial class VmcHeadReceiver : IDisposable
                 {
                     var tr = &hp->ModelPose.Data[0];   // Bone 0 = j_kao im Kopf-Skeleton
                     var rot = new Quaternion(tr->Rotation.X, tr->Rotation.Y, tr->Rotation.Z, tr->Rotation.W);
-                    cam.SetPoseBlendState(ActiveSetLimitAxis);
+                    _cam.SetPoseBlendState(ActiveSetLimitAxis);
                     if (ActiveSetLimitAxis)
-                        cam.SetPoseBlend(relW);
+                        _cam.SetPoseBlend(_relW);
                     else
                     {
-                        if (relW > 0.001f)   // in Pose: Bewegung relativ zur Mitte statt Animations-Haltung
-                            rot = Quaternion.Slerp(rot, Quaternion.Normalize(headDelta * headRestRot), relW);
+                        if (_relW > 0.001f)
+                            rot = Quaternion.Slerp(rot, Quaternion.Normalize(_headDelta * _headRestRot), _relW);
                     }
-                    cam.SetVmcHead(rot, new Vector3(tr->Translation.X, tr->Translation.Y, tr->Translation.Z));
+                    _cam.SetVmcHead(rot, new Vector3(tr->Translation.X, tr->Translation.Y, tr->Translation.Z));
                 }
             }
         }
@@ -689,22 +671,22 @@ public unsafe partial class VmcHeadReceiver : IDisposable
     public void UpdateEmotes()
     {
         var now = GetNowSeconds();
-        foreach (var r in config.EmoteRules)
+        foreach (var r in _config.EmoteRules)
         {
             if (!r.Enabled || !r.Command.StartsWith('/')) continue;
-            emoteState.TryGetValue(r, out var st);
-            if (GetBlend(r.Blend) < r.Threshold) { emoteState[r] = (0, st.fired); continue; }
+            _emoteState.TryGetValue(r, out var st);
+            if (GetBlend(r.Blend) < r.Threshold) { _emoteState[r] = (0, st.fired); continue; }
 
             var since = st.since == 0 ? now : st.since;
             var fired = st.fired;
             if (now - since >= r.HoldSec && now - fired >= r.CooldownSec)
             {
                 Commands.Enqueue(r.Command);
-                if (config.DebugEmotes) log.Debug($"VMC Emote ausgelöst: {r.Blend} ({GetBlend(r.Blend):0.00}) -> {r.Command}");
+                if (_config.DebugEmotes) _log.Debug($"VMC Emote ausgelöst: {r.Blend} ({GetBlend(r.Blend):0.00}) -> {r.Command}");
                 fired = now;
                 since = double.MaxValue;   // erst nach Abfall unter Schwelle wieder scharf
             }
-            emoteState[r] = (since, fired);
+            _emoteState[r] = (since, fired);
         }
     }
     #endregion
@@ -729,10 +711,10 @@ public unsafe partial class VmcHeadReceiver : IDisposable
             var ps = skel->PartialSkeletons[p].GetHavokPose(0);
             if (ps != null && ps->Skeleton != null) sig = sig * 31 + ps->Skeleton->Bones.Length + p;
         }
-        if ((nint)skel != faceSkel || sig != faceSig)
+        if ((nint)skel != _faceSkel || sig != _faceSig)
         {
-            faceSkel = (nint)skel; faceSig = sig;
-            faceIdx.Clear();
+            _faceSkel = (nint)skel; _faceSig = sig;
+            _faceIdx.Clear();
             for (var p = 0; p < skel->PartialSkeletonCount; p++)
             {
                 var ps = skel->PartialSkeletons[p].GetHavokPose(0);
@@ -740,34 +722,34 @@ public unsafe partial class VmcHeadReceiver : IDisposable
                 for (var b = 0; b < ps->Skeleton->Bones.Length; b++)
                 {
                     var n = ps->Skeleton->Bones[b].Name.String ?? string.Empty;
-                    if (!faceIdx.TryGetValue(n, out var l)) faceIdx[n] = l = new();
+                    if (!_faceIdx.TryGetValue(n, out var l)) _faceIdx[n] = l = new();
                     l.Add((p, b));
                 }
             }
             ///debug only
             /*
-            log.Debug($"Face: {faceIdx.Count} Bones indiziert; j_f_mab_l in Partial "
-                + (faceIdx.TryGetValue("j_f_mab_l", out var f) ? string.Join("/", f.Select(x => x.p)) : "- (nicht gefunden)")
+            log.Debug($"Face: {_faceIdx.Count} Bones indiziert; j_f_mab_l in Partial "
+                + (_faceIdx.TryGetValue("j_f_mab_l", out var f) ? string.Join("/", f.Select(x => x.p)) : "- (nicht gefunden)")
                 + ", j_ago in Partial "
-                + (faceIdx.TryGetValue("j_ago", out var g) ? string.Join("/", g.Select(x => x.p)) : "- (nicht gefunden)"));
-            var fk = faceIdx.Keys.Where(k => k.StartsWith("j_f")).ToList();
-            log.Information($"Face-Namen ({fk.Count}): " + string.Join(", ", fk.Count > 0 ? fk : faceIdx.Keys.ToList()));
+                + (_faceIdx.TryGetValue("j_ago", out var g) ? string.Join("/", g.Select(x => x.p)) : "- (nicht gefunden)"));
+            var fk = _faceIdx.Keys.Where(k => k.StartsWith("j_f")).ToList();
+            log.Information($"Face-Namen ({fk.Count}): " + string.Join(", ", fk.Count > 0 ? fk : _faceIdx.Keys.ToList()));
             */
         }
 
         var now = GetNowSeconds();
-        var dt = (float)Math.Clamp(now - lastFaceT, 0.0, 0.1);
-        lastFaceT = now;
+        var dt = (float)Math.Clamp(now - _lastFaceT, 0.0, 0.1);
+        _lastFaceT = now;
         const float Deg = MathF.PI / 180f;
 
-        foreach (var r in config.FaceRules)
+        foreach (var r in _config.FaceRules)
         {
-            if (!r.Enabled || !faceIdx.TryGetValue(r.Bone, out var occ)) continue;
+            if (!r.Enabled || !_faceIdx.TryGetValue(r.Bone, out var occ)) continue;
 
             var goal = r.Force ? 1f : fresh ? Math.Clamp(GetBlend(r.Blend), 0f, 1f) : 0f;
-            faceSm.TryGetValue(r, out var s);
+            _faceSm.TryGetValue(r, out var s);
             s += (goal - s) * MathF.Min(1f, dt * 30f);
-            faceSm[r] = s;
+            _faceSm[r] = s;
             if (s < 0.002f) continue;
 
             foreach (var (p, bi) in occ)
@@ -803,7 +785,7 @@ public unsafe partial class VmcHeadReceiver : IDisposable
     /// </summary>
     public void DumpFaceBones()
     {
-        var lp = objects.LocalPlayer;
+        var lp = _objects.LocalPlayer;
         if (lp == null) return;
         var draw = ((Character*)lp.Address)->GameObject.DrawObject;
         if (draw == null || draw->Object.GetObjectType() != ObjectType.CharacterBase) return;
@@ -822,7 +804,7 @@ public unsafe partial class VmcHeadReceiver : IDisposable
                 var pn = pi >= 0 ? hk->Bones[pi].Name.String : "-";
                 var t = hk->ReferencePose[b].Translation;
                 var r = hk->ReferencePose[b].Rotation;
-                log.Information($"P{p} {n} <- {pn} T({t.X:0.0000},{t.Y:0.0000},{t.Z:0.0000}) R({r.X:0.000},{r.Y:0.000},{r.Z:0.000},{r.W:0.000})");
+                _log.Information($"P{p} {n} <- {pn} T({t.X:0.0000},{t.Y:0.0000},{t.Z:0.0000}) R({r.X:0.000},{r.Y:0.000},{r.Z:0.000},{r.W:0.000})");
             }
         }
     }
@@ -939,8 +921,8 @@ public unsafe partial class VmcHeadReceiver : IDisposable
     /// </summary>
     public void Dispose()
     {
-        if (disposed) return;
-        disposed = true;
+        if (_disposed) return;
+        _disposed = true;
         StopListener();
     }
 }

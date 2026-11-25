@@ -11,13 +11,14 @@ using System.Collections.Generic;
 namespace VMCPlugin.Config;
 
 
-public enum TriggerKind { Mode, Pose, Emote, EmoteBlend, Combat }
+public enum TriggerKind { Mode, Pose, Emote, EmoteStart, EmoteEnd, Combat, Default }
 [Serializable]
 public sealed class PresetRule
 {
     public bool Enabled { get; set; } = true;
     public TriggerKind Kind { get; set; } = TriggerKind.Combat;
     public int Value { get; set; }          // Mode-/Pose-/Emote-ID, bei Combat ohne Bedeutung
+    public int ValueB { get; set; }
     public string Preset { get; set; } = "";   // Name des Presets
     public bool LimitAxis { get; set; } = false;
 
