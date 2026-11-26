@@ -716,21 +716,6 @@ namespace VMCPlugin.BoneManipulation
                 return true;
             }
 
-            public static byte[] WrapPayload(
-                ulong clientId,
-                uint map,
-                uint currentWorld,
-                WirePacketType packetType,
-                ReadOnlySpan<byte> payload,
-                WirePacketFlags flags = WirePacketFlags.None)
-            {
-                var packet = new byte[Size + payload.Length];
-                var hdr = Create(clientId, map, currentWorld, packetType, (uint)payload.Length, flags);
-                hdr.WriteTo(packet.AsSpan(0, Size));
-                payload.CopyTo(packet.AsSpan(Size));
-                return packet;
-            }
-
             public static byte[] WrapPayloadFramed(
                 ulong clientId, uint map, uint currentWorld,
                 WirePacketType packetType, ReadOnlySpan<byte> payload,

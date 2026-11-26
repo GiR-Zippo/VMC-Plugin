@@ -1,4 +1,5 @@
 ﻿using Dalamud.Game.Command;
+using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using VMCPlugin.BoneManipulation;
@@ -16,12 +17,15 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private readonly IDalamudPluginInterface pi;
     private readonly ICommandManager commands;
     private readonly IFramework framework;
+    public readonly WindowSystem WindowSystem = new("VMC Plugin");
     private readonly Configuration config;
-    private ConfigUi configUi;
+
+    private MainWindow mainWindow;
+    private ConfigWindow configUi { get; init; }
+
     public CamController Cam { get; init; }
     private readonly VmcHeadReceiver vmcHead;
     private readonly RenderHook renderHook;
-    private bool showConfig;
 
     public Plugin(
         IDalamudPluginInterface pi,
@@ -53,11 +57,16 @@ public sealed unsafe class Plugin : IDalamudPlugin
         Cam = new CamController(config);
         vmcHead = new VmcHeadReceiver(objects, log, config, Cam);
         renderHook = new RenderHook(sigScanner, interop, vmcHead, log);
-        configUi = new ConfigUi(config, showConfig, pi, vmcHead);
+        configUi = new ConfigWindow(config, pi, vmcHead);
+        mainWindow = new MainWindow(config, pi);
         vmcHead.ConfigureServerTarget("127.0.0.1", 40000);
         framework.Update += OnUpdate;
 
-        pi.UiBuilder.Draw += OnDraw;
+        WindowSystem.AddWindow(configUi);
+        WindowSystem.AddWindow(mainWindow);
+
+        pi.UiBuilder.Draw += WindowSystem.Draw;
+        pi.UiBuilder.OpenMainUi += OpenMainUi;
         pi.UiBuilder.OpenConfigUi += OpenConfig;
 
         commands.AddHandler(CommandName, new CommandInfo((_, args) =>
@@ -92,22 +101,20 @@ public sealed unsafe class Plugin : IDalamudPlugin
         s->Dtor(true);
     }
 
-    private void OpenConfig() => showConfig = !showConfig;
-
-    private void OnDraw()
-    {
-        if (showConfig)
-            configUi.OnDraw();
-    }
+    private void OpenMainUi() => mainWindow.Toggle();
+    public void OpenConfig() { configUi.Toggle(); }
 
     public void Dispose()
     {
+        WindowSystem.RemoveAllWindows();
+
         Cam.Dispose();
         vmcHead.Dispose();
         renderHook.Dispose();
         commands.RemoveHandler(CommandName);
 
-        pi.UiBuilder.Draw -= OnDraw;
+        pi.UiBuilder.Draw -= WindowSystem.Draw;
+        pi.UiBuilder.OpenMainUi -= OpenMainUi;
         pi.UiBuilder.OpenConfigUi -= OpenConfig;
         framework.Update -= OnUpdate;
         configUi.Dispose();

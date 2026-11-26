@@ -1,4 +1,5 @@
 ﻿using Dalamud.Bindings.ImGui;
+using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using System;
 using System.Collections.Generic;
@@ -10,10 +11,9 @@ using VMCPlugin.Offsets;
 
 namespace VMCPlugin.Windows.Config;
 
-internal class ConfigUi : IDisposable
+public class ConfigWindow : Window, IDisposable
 {
     private readonly Configuration _config;
-    private bool _showConfig;
     private readonly IDalamudPluginInterface _pi;
     private VmcHeadReceiver _vmcRecv;
 
@@ -104,17 +104,12 @@ internal class ConfigUi : IDisposable
         return true;
     }
 
-
-    public bool IsOpen
+    public ConfigWindow(Configuration config, IDalamudPluginInterface pi, VmcHeadReceiver vmcRecv) : base(
+        $"VMC Configuration###VMCConfig")
     {
-        get => _showConfig;
-        set => _showConfig = value;
-    }
-
-    public ConfigUi(Configuration config, bool showConfig, IDalamudPluginInterface pi, VmcHeadReceiver vmcRecv)
-    {
+        Size = new Vector2(720f, 480f);
+        SizeCondition = ImGuiCond.FirstUseEver;
         _config = config;
-        _showConfig = showConfig;
         _pi = pi;
         _vmcRecv = vmcRecv;
 
@@ -133,15 +128,14 @@ internal class ConfigUi : IDisposable
         };
     }
 
-    public void OnDraw()
+    public override void PreDraw()
     {
-        ImGui.SetNextWindowSize(new Vector2(720f, 480f), ImGuiCond.FirstUseEver);
-        if (!ImGui.Begin("VMC Config", ref _showConfig))
-        {
-            ImGui.End();
-            return;
-        }
+        Flags &= ~ImGuiWindowFlags.NoMove;
+    }
 
+
+    public override void Draw()
+    {
         var changed = false;
 
         // Linkes Side-Tab-Panel
@@ -170,8 +164,6 @@ internal class ConfigUi : IDisposable
             }
         }
         ImGui.EndChild();
-
-        ImGui.End();
 
         if (changed)
             _pi.SavePluginConfig(_config);
@@ -660,21 +652,21 @@ internal class ConfigUi : IDisposable
         return changed;
     }
 
-    private static bool Toggle(string label, bool value, Action<bool> set)
+    public static bool Toggle(string label, bool value, Action<bool> set)
     {
         if (!ImGui.Checkbox(label, ref value)) return false;
         set(value);
         return true;
     }
 
-    private static bool SliderF(string label, float v, float min, float max, Action<float> set, string fmt = "%.2f")
+    public static bool SliderF(string label, float v, float min, float max, Action<float> set, string fmt = "%.2f")
     {
         ImGui.SetNextItemWidth(220f);
         if (!ImGui.SliderFloat(label, ref v, min, max, fmt)) return false;
         set(v); return true;
     }
 
-    private static bool SliderI(string label, int v, int min, int max, Action<int> set, string fmt = "%d°")
+    public static bool SliderI(string label, int v, int min, int max, Action<int> set, string fmt = "%d°")
     {
         ImGui.SetNextItemWidth(220f);
         if (!ImGui.SliderInt(label, ref v, min, max, fmt)) return false;

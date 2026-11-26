@@ -45,9 +45,18 @@ VMCPlugin/
 
 ## Requirements
 
-* A **VMC-compatible tracking application** capable of streaming OSC data over UDP (e.g., *VSeeFace*, *Warudo*, *VNyan*, *iFacialMocap* via VMC bridge, *Virtual Motion Capture*, etc.)
+* for body tracking: a **VMC-compatible tracking application** capable of streaming OSC data over UDP (e.g., *VSeeFace*, *Warudo*, *VNyan*, *iFacialMocap* via VMC bridge, *Virtual Motion Capture*, etc.)
+* as a receiver: internet and a connection to a server
 
 ---
+
+## Server
+
+### Build via Docker
+
+* docker build -t xivbone . 
+* docker run -d --restart unless-stopped -p 40000:40000 xivbone
+
 
 ## Disclaimer
 
