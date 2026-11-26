@@ -92,12 +92,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
         s->Dtor(true);
     }
 
-    private void OpenConfig() => showConfig = true;
+    private void OpenConfig() => showConfig = !showConfig;
 
     private void OnDraw()
     {
-        if (!showConfig) return;
-        configUi.OnDraw();
+        if (showConfig)
+            configUi.OnDraw();
     }
 
     public void Dispose()

@@ -10,20 +10,13 @@
     <UseWpf>true</UseWpf>
     <Description>TestPlugin.</Description>
     <PackageProjectUrl>https://github.com/GiR-Zippo/VMC-Plugin</PackageProjectUrl>
-    <Version>0.0.4.0</Version>
+    <Version>0.0.4.1</Version>
   </PropertyGroup>
 
   <PropertyGroup>
     <DalamudLibPath>$(appdata)\XIVLauncher\addon\Hooks\dev\</DalamudLibPath>
     <IsPublishable>True</IsPublishable>
   </PropertyGroup>
-
-  <ItemGroup>
-    <Compile Remove="Capsules\**" />
-    <EmbeddedResource Remove="Capsules\**" />
-    <None Remove="Capsules\**" />
-    <Page Remove="Capsules\**" />
-  </ItemGroup>
 
    <ItemGroup>
     <PackageReference Include="DalamudPackager" Version="15.0.0" />
