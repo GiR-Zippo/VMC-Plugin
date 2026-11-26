@@ -2,7 +2,7 @@
   "Author": "GiR-Zippo",
   "Name": "VMCPlugin",
   "InternalName": "VMCPlugin",
-  "AssemblyVersion": "0.0.4.1",
+  "AssemblyVersion": "0.0.4.2",
   "Description": "A plugin receiving VMC data and use it on your character.",
   "ApplicableVersion": "any",
   "Tags": [
