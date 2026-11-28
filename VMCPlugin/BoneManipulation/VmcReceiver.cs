@@ -19,6 +19,7 @@ namespace VMCPlugin.BoneManipulation;
 public unsafe partial class VmcHeadReceiver : IDisposable
 {
     private CamController _cam;
+    public PapRecorder Recorder { get; } = new();
 
     //--- Face Stuff
     private readonly Dictionary<string, List<(int p, int b)>> _faceIdx = new(StringComparer.OrdinalIgnoreCase);
@@ -471,8 +472,16 @@ public unsafe partial class VmcHeadReceiver : IDisposable
 
         if (CamController.InFirstPerson)
             ApplyBodyTurn(lp.Address);
-        SendFinalBones = true;
-        EnqueueFinalXivBones(lp.Address, lp.Position);
+
+
+
+        var chara = (Character*)lp.Address;
+        if (Recorder.Recording && HasVisibleDrawObject(chara))
+            Recorder.Capture(chara, GetNowSeconds());
+
+        if (_config.RemoteEnabled)
+            EnqueueFinalXivBones(lp.Address, lp.Position);
+
         if (!isFresh) return;
     }
 
@@ -937,6 +946,7 @@ public unsafe partial class VmcHeadReceiver : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        Recorder.Stop();
         StopListener();
         StopRemote();
     }

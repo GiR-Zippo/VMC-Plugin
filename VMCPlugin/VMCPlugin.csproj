@@ -10,7 +10,7 @@
     <UseWpf>true</UseWpf>
     <Description>TestPlugin.</Description>
     <PackageProjectUrl>https://github.com/GiR-Zippo/VMC-Plugin</PackageProjectUrl>
-    <Version>0.0.4.2</Version>
+    <Version>0.0.5.0</Version>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -28,6 +28,7 @@
     <PackageReference Include="JetBrains.Annotations" Version="2026.2.0" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="Resourcer.Fody" Version="1.8.1" PrivateAssets="all" />
+    <PackageReference Include="SharpGLTF.Toolkit" Version="1.0.7" />
     <PackageReference Include="TinyIpc" Version="5.3.0" />
   </ItemGroup>
 

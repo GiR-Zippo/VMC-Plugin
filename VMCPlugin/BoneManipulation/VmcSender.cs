@@ -54,8 +54,6 @@ namespace VMCPlugin.BoneManipulation
         private int _reconnectDelayMs = 500;
 
         // --- Options ---
-        public bool SendFinalBones { get; set; }
-
         private bool _remoteEnabled;
         public bool RemoteEnabled
         {
@@ -316,7 +314,7 @@ namespace VMCPlugin.BoneManipulation
 
         public void EnqueueFinalXivBones(nint charAddress, Vector3 worldPos)
         {
-            if (!SendFinalBones || !_tcpRunning)
+            if (!_tcpRunning)
                 return;
 
             var chara = (Character*)charAddress;

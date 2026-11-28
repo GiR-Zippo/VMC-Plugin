@@ -58,7 +58,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         vmcHead = new VmcHeadReceiver(objects, log, config, Cam);
         renderHook = new RenderHook(sigScanner, interop, vmcHead, log);
         configUi = new ConfigWindow(config, pi, vmcHead);
-        mainWindow = new MainWindow(config, pi);
+        mainWindow = new MainWindow(config, pi, vmcHead);
         vmcHead.ConfigureServerTarget("127.0.0.1", 40000);
         framework.Update += OnUpdate;
 
