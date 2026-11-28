@@ -2,7 +2,7 @@
 
 namespace XivBoneServer;
 
-public enum PacketType : uint { None = 0, FinalBones = 1, Heartbeat = 2 }
+public enum PacketType : uint { None = 0, FinalBones = 1, Heartbeat = 2, FinalBonesDelta = 3 }
 public readonly record struct CellKey(uint Map, uint World, int Cx, int Cz);
 
 public readonly record struct WireHeader(

@@ -15,6 +15,9 @@ public sealed class ClientSession
     public bool InGrid;
     public readonly TcpClient Tcp;
     public readonly CancellationTokenSource Cts = new();
+    public byte[]? LastKeyFrame;
+    public long KeyVersion;
+    public readonly Dictionary<ulong, long> KnownKeys = new();   // nur unter _gridLock benutzen
 
     // Pro Client eine Sende-Queue: ein langsamer Empfänger bremst niemanden, älteste Frames fallen weg
     public readonly Channel<byte[]> Outbox = Channel.CreateBounded<byte[]>(

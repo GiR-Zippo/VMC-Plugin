@@ -16,6 +16,7 @@ public sealed class Server
     private readonly Dictionary<CellKey, List<ClientSession>> _grid = new();
     private readonly object _gridLock = new();
     private readonly float _cellSize;
+    private long _keySeq;
 
     public Server(float maxDistance, double staleSec, bool debug)
     {
@@ -94,7 +95,7 @@ public sealed class Server
                 session.World = h.World;
                 session.LastSeenTicks = Environment.TickCount64;
 
-                if (h.Type is PacketType.FinalBones or PacketType.Heartbeat && h.PayloadLength >= 12)
+                if (h.Type is PacketType.FinalBones or PacketType.FinalBonesDelta or PacketType.Heartbeat && h.PayloadLength >= 12)
                 {
                     var p = frame[WireHeader.Size..];
                     session.X = BitConverter.ToSingle(p[0..4]);
@@ -108,7 +109,15 @@ public sealed class Server
 
                 // Heartbeats dienen nur Position/Presence, werden nicht weitergeleitet
                 if (h.Type == PacketType.FinalBones)
-                    Broadcast(session, framed);
+                {
+                    session.LastKeyFrame = framed;
+                    session.KeyVersion = Interlocked.Increment(ref _keySeq);
+                    Broadcast(session, framed, isKey: true);
+                }
+                else if (h.Type == PacketType.FinalBonesDelta)
+                {
+                    Broadcast(session, framed, isKey: false);
+                }
             }
         }
         catch (Exception ex) when (ex is EndOfStreamException or IOException or OperationCanceledException or ObjectDisposedException) { }
@@ -164,7 +173,7 @@ public sealed class Server
         s.InGrid = false;
     }
 
-    private void Broadcast(ClientSession sender, byte[] framed)
+    private void Broadcast(ClientSession sender, byte[] framed, bool isKey)
     {
         if (!sender.InGrid) return;
         var c = sender.Cell;
@@ -184,6 +193,18 @@ public sealed class Server
                         var dy = other.Y - sender.Y;
                         var dz = other.Z - sender.Z;
                         if (dx * dx + dy * dy + dz * dz > _maxDistSq) continue;
+
+                        if (isKey)
+                        {
+                            other.KnownKeys[sender.ClientId] = sender.KeyVersion;
+                        }
+                        else if (!other.KnownKeys.TryGetValue(sender.ClientId, out var v) || v != sender.KeyVersion)
+                        {
+                            if (sender.LastKeyFrame is not { } key) continue;   // Sender hat noch keinen Keyframe geschickt
+                            other.Outbox.Writer.TryWrite(key);                  // Keyframe vor dem ersten Delta nachreichen
+                            other.KnownKeys[sender.ClientId] = sender.KeyVersion;
+                        }
+
                         other.Outbox.Writer.TryWrite(framed);
                     }
                 }

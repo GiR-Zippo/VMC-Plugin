@@ -1,12 +1,12 @@
 ﻿using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
-using FFXIVClientStructs.FFXIV.Common.Math;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Net.Sockets;
+using System.Numerics;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,6 +23,7 @@ namespace VMCPlugin.BoneManipulation
             public Vector3 WorldPos;
             public double ReceivedAtSec;
             public readonly Dictionary<string, (Quaternion Rot, Vector3 Pos)> Bones = new(StringComparer.OrdinalIgnoreCase);
+            public string[] Names = Array.Empty<string>();
         }
 
         private readonly record struct OutgoingBoneSample(string Name, Quaternion Rot, Vector3 Pos);
@@ -52,6 +53,12 @@ namespace VMCPlugin.BoneManipulation
         private volatile bool _tcpRunning;
         private readonly object _connLock = new();
         private int _reconnectDelayMs = 500;
+
+        // --- Paket ---
+        private readonly Dictionary<string, (Quaternion Rot, Vector3 Pos)> _lastSent = new(StringComparer.OrdinalIgnoreCase);
+        private int _keyCount;
+        private double _lastKeySec = -999, _lastDeltaSec;
+        private const double KeyInterval = 5.0;
 
         // --- Options ---
         private bool _remoteEnabled;
@@ -314,21 +321,17 @@ namespace VMCPlugin.BoneManipulation
 
         public void EnqueueFinalXivBones(nint charAddress, Vector3 worldPos)
         {
-            if (!_tcpRunning)
-                return;
-
             var chara = (Character*)charAddress;
             if (!HasVisibleDrawObject(chara))
+                return;
+
+            if (!_tcpRunning)
                 return;
 
             var skel = ((CharacterBase*)chara->GameObject.DrawObject)->Skeleton;
             if (skel == null)
                 return;
 
-            /*var targetXivNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var node in _retargetNodes)
-                targetXivNames.Add(node.Xiv);
-*/
             var samples = new List<OutgoingBoneSample>(64);
             var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -344,17 +347,12 @@ namespace VMCPlugin.BoneManipulation
                 for (var b = 0; b < boneCount; b++)
                 {
                     var name = hk->Bones[b].Name.String;
-                    if (string.IsNullOrEmpty(name))
-                        continue;
-
-                    // Falls derselbe Bone-Name in mehreren Partials auftaucht, nur einmal pro Frame aufnehmen
-                    if (!seenNames.Add(name))
+                    if (string.IsNullOrEmpty(name) || !seenNames.Add(name))
                         continue;
 
                     var tr = pose->ModelPose.Data[b];
                     var q = Quaternion.Normalize(new Quaternion(tr.Rotation.X, tr.Rotation.Y, tr.Rotation.Z, tr.Rotation.W));
                     var pos = new Vector3(tr.Translation.X, tr.Translation.Y, tr.Translation.Z);
-
                     samples.Add(new OutgoingBoneSample(name, q, pos));
                 }
             }
@@ -362,7 +360,72 @@ namespace VMCPlugin.BoneManipulation
             if (samples.Count == 0)
                 return;
 
-            // Encoding vorberechnen, damit die exakte Payload-Größe sofort feststeht
+            var nowSec = GetNowSeconds();
+            var isKey = nowSec - _lastKeySec > KeyInterval || samples.Count != _keyCount;
+
+            // ---------- Delta-Paket ----------
+            if (!isKey)
+            {
+                var entries = new List<(ushort Idx, uint Rot, Vector3? Pos)>(samples.Count);
+                for (var i = 0; i < samples.Count; i++)
+                {
+                    var s = samples[i];
+                    if (!_lastSent.TryGetValue(s.Name, out var last))
+                        continue;
+
+                    var rotCh = MathF.Abs(Quaternion.Dot(s.Rot, last.Rot)) < 0.99999f;   // ~0,5°
+                    var posCh = Vector3.DistanceSquared(s.Pos, last.Pos) > 1e-6f;        // ~1 mm
+                    if (!rotCh && !posCh)
+                        continue;
+
+                    entries.Add(((ushort)i, PackQuat(s.Rot), posCh ? s.Pos : null));
+                    _lastSent[s.Name] = (s.Rot, posCh ? s.Pos : last.Pos);
+                }
+
+                if (entries.Count == 0 && nowSec - _lastDeltaSec < 0.5)
+                    return;                                   // Keepalive alle 0,5 s
+                _lastDeltaSec = nowSec;
+
+                var buf = new byte[14 + entries.Count * 12];
+                var sp = buf.AsSpan();
+                BinaryPrimitives.WriteSingleLittleEndian(sp[0..4], worldPos.X);
+                BinaryPrimitives.WriteSingleLittleEndian(sp[4..8], worldPos.Y);
+                BinaryPrimitives.WriteSingleLittleEndian(sp[8..12], worldPos.Z);
+                BinaryPrimitives.WriteUInt16LittleEndian(sp[12..14], (ushort)entries.Count);
+
+                var o = 14;
+                foreach (var (idx, rot, pos) in entries)
+                {
+                    BinaryPrimitives.WriteUInt16LittleEndian(sp[o..], (ushort)(idx | (pos.HasValue ? 0x8000 : 0)));
+                    o += 2;
+                    BinaryPrimitives.WriteUInt32LittleEndian(sp[o..], rot);
+                    o += 4;
+                    if (pos is { } p)
+                    {
+                        BinaryPrimitives.WriteHalfLittleEndian(sp[o..], (Half)p.X);
+                        BinaryPrimitives.WriteHalfLittleEndian(sp[(o + 2)..], (Half)p.Y);
+                        BinaryPrimitives.WriteHalfLittleEndian(sp[(o + 4)..], (Half)p.Z);
+                        o += 6;
+                    }
+                }
+
+                _sendQueue.TryAdd(WireHeader.WrapPayloadFramed(
+                    Api.PlayerState.ContentId,
+                    Api.ClientState.MapId,
+                    chara->CurrentWorld,
+                    WirePacketType.FinalBonesDelta,
+                    buf.AsSpan(0, o),
+                    WirePacketFlags.HasWorldPos));
+                return;
+            }
+
+            // ---------- Keyframe (volle Namen + Floats, wie bisher) ----------
+            _lastKeySec = nowSec;
+            _keyCount = samples.Count;
+            _lastSent.Clear();
+            foreach (var s in samples)
+                _lastSent[s.Name] = (s.Rot, s.Pos);
+
             var encodedEntries = new List<(byte[] NameBytes, Quaternion Rot, Vector3 Pos)>(samples.Count);
             var entriesByteLen = 0;
 
@@ -373,14 +436,12 @@ namespace VMCPlugin.BoneManipulation
                     continue;
 
                 encodedEntries.Add((nameBytes, s.Rot, s.Pos));
-                entriesByteLen += 1 + nameBytes.Length + 16 + 12; // 1B len + name + 16B rot + 12B pos
+                entriesByteLen += 1 + nameBytes.Length + 16 + 12;
             }
 
             if (encodedEntries.Count == 0)
                 return;
 
-            // Payload (ohne 28B WireHeader und ohne TCP-Längenpräfix):
-            // [12B WorldPos x,y,z] + [2B count(u16)] + entries
             var payload = new byte[12 + 2 + entriesByteLen];
             var pSpan = payload.AsSpan();
 
@@ -408,15 +469,13 @@ namespace VMCPlugin.BoneManipulation
                 offset += 12;
             }
 
-            var packet = WireHeader.WrapPayloadFramed(
+            _sendQueue.TryAdd(WireHeader.WrapPayloadFramed(
                 Api.PlayerState.ContentId,
                 Api.ClientState.MapId,
                 chara->CurrentWorld,
                 WirePacketType.FinalBones,
                 payload,
-                WirePacketFlags.HasWorldPos);
-
-            _sendQueue.TryAdd(packet);
+                WirePacketFlags.HasWorldPos));
         }
 
         private static bool MatchesAnyPrefix(string name, string[] prefixes)
@@ -462,7 +521,48 @@ namespace VMCPlugin.BoneManipulation
 
                 case WirePacketType.FinalBones:
                     break;
+                case WirePacketType.FinalBonesDelta:
+                    {
+                        if (payload.Length < 14 || !_latestRemoteFrames.TryGetValue(hdr.ClientId, out var old) || old.Names.Length == 0)
+                            return;                                // auf Keyframe warten
 
+                        var nf = new RemoteBoneFrame
+                        {
+                            ClientId = old.ClientId,
+                            Names = old.Names,
+                            ReceivedAtSec = GetNowSeconds(),
+                            WorldPos = new Vector3(
+                                BinaryPrimitives.ReadSingleLittleEndian(payload[0..4]),
+                                BinaryPrimitives.ReadSingleLittleEndian(payload[4..8]),
+                                BinaryPrimitives.ReadSingleLittleEndian(payload[8..12]))
+                        };
+                        foreach (var kv in old.Bones) nf.Bones[kv.Key] = kv.Value;   // Kopie, vermeidet Race mit dem Main-Thread
+
+                        var cnt = BinaryPrimitives.ReadUInt16LittleEndian(payload[12..14]);
+                        var o = 14;
+                        for (var i = 0; i < cnt; i++)
+                        {
+                            if (o + 6 > payload.Length) break;
+                            var raw = BinaryPrimitives.ReadUInt16LittleEndian(payload[o..]); o += 2;
+                            var rot = UnpackQuat(BinaryPrimitives.ReadUInt32LittleEndian(payload[o..])); o += 4;
+                            var idx = raw & 0x7FFF;
+                            if (idx >= nf.Names.Length) break;
+                            var name = nf.Names[idx];
+                            var dpos = nf.Bones.TryGetValue(name, out var cur) ? cur.Pos : default;
+                            if ((raw & 0x8000) != 0)
+                            {
+                                if (o + 6 > payload.Length) break;
+                                dpos = new Vector3(
+                                    (float)BinaryPrimitives.ReadHalfLittleEndian(payload[o..]),
+                                    (float)BinaryPrimitives.ReadHalfLittleEndian(payload[(o + 2)..]),
+                                    (float)BinaryPrimitives.ReadHalfLittleEndian(payload[(o + 4)..]));
+                                o += 6;
+                            }
+                            nf.Bones[name] = (Quaternion.Normalize(rot), dpos);
+                        }
+                        _latestRemoteFrames[hdr.ClientId] = nf;
+                        return;
+                    }
                 default:
                     return;
             }
@@ -483,6 +583,7 @@ namespace VMCPlugin.BoneManipulation
                 ReceivedAtSec = GetNowSeconds(),
             };
 
+            var names = new List<string>(count);
             var pos = 14;
             for (var i = 0; i < count; i++)
             {
@@ -491,6 +592,7 @@ namespace VMCPlugin.BoneManipulation
                 if (pos + nameLen + 28 > payload.Length) break;
 
                 var boneName = Encoding.UTF8.GetString(payload.Slice(pos, nameLen));
+                names.Add(boneName);
                 pos += nameLen;
 
                 var rx = BinaryPrimitives.ReadSingleLittleEndian(payload[pos..(pos + 4)]);
@@ -507,7 +609,7 @@ namespace VMCPlugin.BoneManipulation
                 var rot = Quaternion.Normalize(new Quaternion(rx, ry, rz, rw));
                 frame.Bones[boneName] = (rot, new Vector3(px, py, pz));
             }
-
+            frame.Names = names.ToArray();
             _latestRemoteFrames[hdr.ClientId] = frame;
         }
 
@@ -627,12 +729,38 @@ namespace VMCPlugin.BoneManipulation
             return ((CharacterBase*)draw)->Skeleton != null;
         }
 
-        public enum WirePacketType : uint
+        private static uint PackQuat(Quaternion q)
         {
-            None = 0,
-            FinalBones = 1,
-            Heartbeat = 2
+            Span<float> a = stackalloc float[4] { q.X, q.Y, q.Z, q.W };
+            var big = 0;
+            for (var i = 1; i < 4; i++) if (MathF.Abs(a[i]) > MathF.Abs(a[big])) big = i;
+            var sign = a[big] < 0 ? -1f : 1f;
+            var v = (uint)big; var k = 0;
+            for (var i = 0; i < 4; i++)
+            {
+                if (i == big) continue;
+                var c = Math.Clamp(a[i] * sign * 1.41421356f, -1f, 1f);
+                v |= (uint)MathF.Round((c * 0.5f + 0.5f) * 1023f) << (2 + 10 * k++);
+            }
+            return v;
         }
+
+        private static Quaternion UnpackQuat(uint v)
+        {
+            Span<float> a = stackalloc float[4];
+            var big = (int)(v & 3); var k = 0; var sum = 0f;
+            for (var i = 0; i < 4; i++)
+            {
+                if (i == big) continue;
+                var q10 = (v >> (2 + 10 * k++)) & 1023;
+                a[i] = ((q10 / 1023f) * 2f - 1f) / 1.41421356f;
+                sum += a[i] * a[i];
+            }
+            a[big] = MathF.Sqrt(MathF.Max(0f, 1f - sum));
+            return new Quaternion(a[0], a[1], a[2], a[3]);
+        }
+
+        public enum WirePacketType : uint { None = 0, FinalBones = 1, Heartbeat = 2, FinalBonesDelta = 3 }
 
         [Flags]
         public enum WirePacketFlags : ushort
