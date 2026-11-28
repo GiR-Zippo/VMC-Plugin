@@ -176,6 +176,11 @@ public unsafe partial class VmcHeadReceiver : IDisposable
         this._log = log;
         this._config = conf;
         this._cam = cam;
+
+        //build bone limits
+        if (_config.RotLimits.Count == 0)
+            _config.RotLimits.AddRange(RotLimitRule.Defaults());
+        RebuildLimits();
     }
 
     #region Network
@@ -512,10 +517,21 @@ public unsafe partial class VmcHeadReceiver : IDisposable
         _lastRetargetT = now;
         var anyActive = false;
         var active = ActiveSet;
+
+        //rotation limiter
+        var locals = new Dictionary<string, Quaternion>(StringComparer.OrdinalIgnoreCase);
+        if (_config.RotLimit)
+        {
+            foreach (var kv in snap)
+                locals[kv.Key] = ToXiv(kv.Value);
+            if (_config.RotLimit)
+                LimitLocals(locals);
+        }
+
         foreach (var n in _retargetNodes)
         {
             var hasData = snap.TryGetValue(n.Vmc, out var raw);
-            var local = hasData ? ToXiv(raw) : Quaternion.Identity;
+            var local = _config.RotLimit ? (hasData && locals.TryGetValue(n.Vmc, out var lq) ? lq : Quaternion.Identity) : (hasData ? ToXiv(raw) : Quaternion.Identity);
             if (n.Vmc == "Hips") local = RemoveYaw(local);   // Zeile löschen, um das Körper-Yaw zu behalten
 
             var parentRot = n.Parent != null && model.TryGetValue(n.Parent, out var pr) ? pr : Quaternion.Identity;

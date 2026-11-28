@@ -31,6 +31,35 @@ public sealed class BonePreset
     public HashSet<string> Bones { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
+
+[Serializable]
+public class RotLimitRule
+{
+    public bool Enabled { get; set; } = true;
+    public string Bone { get; set; } = "";   // ohne Left/Right, z.B. "Hand", "Proximal"
+    public float Swing { get; set; } = 90f;
+    public float Twist { get; set; } = 45f;
+
+    public static List<RotLimitRule> Defaults() => new()
+    {
+        new() { Bone = "Spine", Swing = 35, Twist = 25 },
+        new() { Bone = "Chest", Swing = 25, Twist = 20 },
+        new() { Bone = "UpperChest", Swing = 20, Twist = 15 },
+        new() { Bone = "Neck", Swing = 40, Twist = 45 },
+        new() { Bone = "Head", Swing = 45, Twist = 60 },
+        new() { Bone = "Shoulder", Swing = 25, Twist = 10 },
+        new() { Bone = "UpperArm", Swing = 130, Twist = 100 },
+        new() { Bone = "LowerArm", Swing = 150, Twist = 70 },
+        new() { Bone = "Hand", Swing = 110, Twist = 90 },
+        new() { Bone = "UpperLeg", Swing = 120, Twist = 45 },
+        new() { Bone = "LowerLeg", Swing = 150, Twist = 20 },
+        new() { Bone = "Foot", Swing = 50, Twist = 30 },
+        new() { Bone = "Toes", Swing = 45, Twist = 5 },
+        new() { Bone = "Proximal", Swing = 130, Twist = 20 },
+        new() { Bone = "Intermediate", Swing = 140, Twist = 10 },
+    };
+}
+
 [Serializable]
 public sealed class EmoteRule
 {
@@ -136,6 +165,12 @@ public class Configuration : IPluginConfiguration
 
     public List<BonePreset> Presets { get; set; } = new();
     public int ActivePreset { get; set; }
+    #endregion
+
+    #region Bone Limit
+    public bool RotLimit { get; set; } = false;
+    public float TwistShare { get; set; } = 0.6f;
+    public List<RotLimitRule> RotLimits { get; set; } = new();
     #endregion
 
     #region Face Tracking

@@ -123,6 +123,7 @@ public class ConfigWindow : Window, IDisposable
             ["Hair"] = DrawHair,
             ["Emotes"] = DrawEmotes,
             ["Face Tracking"] = DrawFace,
+            ["Rotation Limits"] = DrawRotLimits,
             ["FPView"] = DrawFPV,
             ["Debug"] = DrawDebug,
         };
@@ -584,7 +585,72 @@ public class ConfigWindow : Window, IDisposable
             ImGui.EndTable();
         }
         if (rm >= 0) { rules.RemoveAt(rm); ch = true; }
-        if (ImGui.Button("+ Regel")) { rules.Add(new FaceRule()); ch = true; }
+        if (ImGui.Button("+ Rule")) { rules.Add(new FaceRule()); ch = true; }
+        return ch;
+    }
+
+    private bool DrawRotLimits()
+    {
+        var ch = Toggle("Rotation-Limiter", _config.RotLimit, v => _config.RotLimit = v);
+
+        var ts = _config.TwistShare;
+        ImGui.SetNextItemWidth(200f);
+        if (ImGui.SliderFloat("Twist Hand→Lower Arm", ref ts, 0f, 1f, "%.2f")) { _config.TwistShare = ts; ch = true; }
+
+        if (ImGui.Button("Load default (replaces)"))
+        {
+            _config.RotLimits.Clear();
+            _config.RotLimits.AddRange(RotLimitRule.Defaults());
+            ch = true;
+        }
+
+        var rules = _config.RotLimits;
+        var rm = -1;
+        if (ImGui.BeginTable("##rotlim", 5, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
+        {
+            ImGui.TableSetupColumn("On", ImGuiTableColumnFlags.WidthFixed, 28f);
+            ImGui.TableSetupColumn("Bone", ImGuiTableColumnFlags.WidthStretch, 1.2f);
+            ImGui.TableSetupColumn("Swing (°)", ImGuiTableColumnFlags.WidthStretch, 1f);
+            ImGui.TableSetupColumn("Twist (°)", ImGuiTableColumnFlags.WidthStretch, 1f);
+            ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 30f);
+            ImGui.TableHeadersRow();
+
+            for (var i = 0; i < rules.Count; i++)
+            {
+                var r = rules[i];
+                ImGui.PushID(7000 + i);
+                ImGui.TableNextRow();
+
+                ImGui.TableNextColumn();
+                var on = r.Enabled;
+                if (ImGui.Checkbox("##on", ref on)) { r.Enabled = on; ch = true; }
+
+                ImGui.TableNextColumn();
+                ImGui.SetNextItemWidth(-1f);
+                var bn = r.Bone;
+                if (ImGui.InputText("##bn", ref bn, 64)) { r.Bone = bn; ch = true; }
+
+                ImGui.TableNextColumn();
+                ImGui.SetNextItemWidth(-1f);
+                var sw = r.Swing;
+                if (ImGui.DragFloat("##sw", ref sw, 0.5f, 1f, 180f, "%.0f")) { r.Swing = sw; ch = true; }
+
+                ImGui.TableNextColumn();
+                ImGui.SetNextItemWidth(-1f);
+                var tw = r.Twist;
+                if (ImGui.DragFloat("##tw", ref tw, 0.5f, 1f, 180f, "%.0f")) { r.Twist = tw; ch = true; }
+
+                ImGui.TableNextColumn();
+                if (ImGui.SmallButton("x")) rm = i;
+
+                ImGui.PopID();
+            }
+            ImGui.EndTable();
+        }
+        if (rm >= 0) { rules.RemoveAt(rm); ch = true; }
+        if (ImGui.Button("+ Rule")) { rules.Add(new RotLimitRule()); ch = true; }
+
+        if (ch) _vmcRecv.RebuildLimits();
         return ch;
     }
 
